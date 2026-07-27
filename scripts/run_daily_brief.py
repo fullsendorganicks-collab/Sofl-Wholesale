@@ -6,7 +6,7 @@ out later, one cron job serves every customer, nothing per-client to add.
 """
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)  # .env always wins over stale shell/session env vars
 
 from app.db import get_conn
 from app.services import daily_brief

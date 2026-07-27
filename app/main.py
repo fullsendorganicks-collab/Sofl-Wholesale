@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # .env always wins over stale shell/session env vars
 
 from app.services import (batchdata_service, lead_scoring, deal_analysis,
                            offer_drafting, gmail_service, buyer_matching,

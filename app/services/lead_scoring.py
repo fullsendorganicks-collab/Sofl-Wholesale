@@ -6,10 +6,17 @@ contact happens here, so there's no TCPA exposure at this stage.
 
 import os
 import json
+from decimal import Decimal
 from anthropic import Anthropic
 from app.db import get_conn
 
 client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+
+def _json_default(o):
+    if isinstance(o, Decimal):
+        return float(o)
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
 
 SCORING_PROMPT = """You are scoring a real estate wholesale lead for how promising it is.
 
@@ -35,7 +42,7 @@ def score_lead(lead: dict) -> dict:
         "distress_signals": lead.get("distress_signals"),
         "estimated_value": lead.get("estimated_value"),
         "equity_estimate": lead.get("equity_estimate"),
-    })
+    }, default=_json_default)
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
