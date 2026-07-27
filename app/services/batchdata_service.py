@@ -15,14 +15,29 @@ documented REST API. Sign up at batchdata.com to get BATCHDATA_API_KEY.
 This module intentionally does ONE thing: pull raw property/owner data and
 insert it into the `leads` table with status='new'. Scoring happens
 separately in lead_scoring.py so you can re-run scoring without re-pulling data.
+
+OPTIONAL: BatchData is not required for the rest of the app to run. If
+BATCHDATA_API_KEY is unset, ingest_leads() raises a clear error when called
+instead of crashing the whole app on import -- everything else (scoring,
+offers, contracts, directives, daily brief) works fine without it. Add
+leads manually until a BatchData key is set up.
 """
 
 import os
 import httpx
 from app.db import get_conn
 
-BATCHDATA_API_KEY = os.environ["BATCHDATA_API_KEY"]
+BATCHDATA_API_KEY = os.environ.get("BATCHDATA_API_KEY")
 BATCHDATA_BASE_URL = "https://api.batchdata.com/api/v1"
+
+
+def _require_api_key() -> None:
+    if not BATCHDATA_API_KEY:
+        raise RuntimeError(
+            "BATCHDATA_API_KEY is not set. Sign up at batchdata.com and add the key "
+            "to your environment before pulling leads -- until then, leads can be "
+            "added to the `leads` table manually."
+        )
 
 
 def search_distressed_properties(county: str, state: str, zip_codes: list[str] | None = None,
@@ -42,6 +57,7 @@ def search_distressed_properties(county: str, state: str, zip_codes: list[str] |
     at the time you build this -- API providers change field names periodically,
     so verify against https://developer.batchdata.com before relying on this.
     """
+    _require_api_key()
     filters = filters or {}
     payload = {
         "searchCriteria": {
@@ -67,6 +83,7 @@ def skip_trace(address: str, city: str, state: str, zip_code: str) -> dict:
     mailing address) if available. This is the paid "skip tracing" function --
     it's what turns "we know who owns this" into "we know how to reach them."
     """
+    _require_api_key()
     payload = {"requests": [{"propertyAddress": {"street": address, "city": city,
                                                    "state": state, "zip": zip_code}}]}
     headers = {"Authorization": f"Bearer {BATCHDATA_API_KEY}", "Content-Type": "application/json"}
