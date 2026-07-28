@@ -56,7 +56,7 @@ outbound action (offer emails, contracts) requires your explicit approval
 
 ## 5. What's built but never tested with real data
 
-- `batchdata_service.py` (lead ingestion) — endpoint reachable, field-name mapping unverified against a real successful response
+- `batchdata_service.py` (lead ingestion) — endpoint reachable, field-name mapping unverified against a real successful response. Now includes a hard qualifying filter (rejects properties with zero distress signals or equity below `min_equity_percent`, default 30%) — filter logic itself is straightforward Python, but its real-world effect depends on BatchData's actual returned equity/value numbers, still unverified
 - `buyer_acquisition.py` (buyer prospecting) — same, untested
 - `deal_analysis.py` (ARV/MAO calculator) — logic only, no real comps run through it
 - `contract_generation.py` (Purchase Agreement + Assignment Agreement) — never actually generated a real document
