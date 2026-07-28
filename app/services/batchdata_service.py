@@ -175,14 +175,33 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                     rejected += 1
                     continue
 
-                trace = skip_trace(address, city, state, zip_code)
-                owner = trace.get("owner", {})
+                # VERIFIED 2026-07-28: /property/search's own response already
+                # includes real owner name + mailing address under prop["owner"]
+                # (owner.fullName, owner.names, owner.mailingAddress) -- confirmed
+                # correct on a real lead ("Eva Maria Hernandez-Perucha"). Use that
+                # directly rather than relying on skip_trace() for name/address;
+                # skip_trace's actual job is phone/email, which search does NOT
+                # return. Its response shape for those fields is still unconfirmed
+                # (the one real call so far returned something that didn't have
+                # name/phone/email at the top level either -- likely a full
+                # property record via the "properties" fallback key, not a
+                # person-contact object), so treat phone/email as best-effort.
+                search_owner = prop.get("owner") or {}
+                owner_name = search_owner.get("fullName")
 
-                # owner_mailing_address is a plain TEXT column, but skip-trace's
-                # mailingAddress (like /property/search's address field) may come
-                # back as a nested object, not a string -- flatten it defensively
-                # rather than assume the shape, same lesson as the search endpoint.
-                mailing_address = owner.get("mailingAddress")
+                trace = skip_trace(address, city, state, zip_code)
+                trace_owner = trace.get("owner") or {}
+                # Try a few plausible field-name variants for phone/email since
+                # skip-trace's real shape for contact info is still unconfirmed.
+                owner_phone = (trace_owner.get("phone") or trace.get("phone") or
+                               trace.get("phoneNumber"))
+                owner_email = (trace_owner.get("email") or trace.get("email"))
+
+                # owner_mailing_address is a plain TEXT column, but the mailing
+                # address field may come back as a nested object, not a string --
+                # flatten it defensively rather than assume the shape, same
+                # lesson as the search endpoint.
+                mailing_address = search_owner.get("mailingAddress") or trace_owner.get("mailingAddress")
                 if isinstance(mailing_address, dict):
                     mailing_address = ", ".join(
                         str(v) for v in
@@ -200,7 +219,7 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new')
                 """, (
                     org_id, "batchdata", address, city, state, zip_code, county,
-                    owner.get("name"), owner.get("phone"), owner.get("email"),
+                    owner_name, owner_phone, owner_email,
                     mailing_address, estimated_value, estimated_equity,
                     __import__("json").dumps(distress_signals),
                     is_lis_pendens,
