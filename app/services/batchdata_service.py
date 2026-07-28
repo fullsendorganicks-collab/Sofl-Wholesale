@@ -92,8 +92,24 @@ def skip_trace(address: str, city: str, state: str, zip_code: str) -> dict:
         resp.raise_for_status()
         data = resp.json()
 
+    # Defensive against shape: a real call on 2026-07-28 hit `results[0]`
+    # with a KeyError, meaning `results` was NOT a plain list as assumed
+    # (likely a dict, e.g. {"persons": [...]} or similar -- BatchData's
+    # skip-trace response shape wasn't confirmed before that call). Handle
+    # both a list and a dict-with-a-list-inside without guessing further;
+    # log the raw shape once so it's visible if this still doesn't match.
     results = data.get("results", [])
-    return results[0] if results else {}
+    if isinstance(results, list):
+        return results[0] if results else {}
+    if isinstance(results, dict):
+        for key in ("persons", "matches", "properties", "records"):
+            inner = results.get(key)
+            if isinstance(inner, list) and inner:
+                return inner[0]
+        print(f"[batchdata_service] skip_trace: unrecognized results shape, keys={list(results.keys())}")
+        return results
+    print(f"[batchdata_service] skip_trace: unexpected results type {type(results)}: {data}")
+    return {}
 
 
 def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | None = None,
@@ -162,6 +178,19 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 trace = skip_trace(address, city, state, zip_code)
                 owner = trace.get("owner", {})
 
+                # owner_mailing_address is a plain TEXT column, but skip-trace's
+                # mailingAddress (like /property/search's address field) may come
+                # back as a nested object, not a string -- flatten it defensively
+                # rather than assume the shape, same lesson as the search endpoint.
+                mailing_address = owner.get("mailingAddress")
+                if isinstance(mailing_address, dict):
+                    mailing_address = ", ".join(
+                        str(v) for v in
+                        [mailing_address.get("street"), mailing_address.get("city"),
+                         mailing_address.get("state"), mailing_address.get("zip")]
+                        if v
+                    )
+
                 cur.execute("""
                     INSERT INTO leads (org_id, source, address, city, state, zip, county,
                                         owner_name, owner_phone, owner_email,
@@ -172,7 +201,7 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 """, (
                     org_id, "batchdata", address, city, state, zip_code, county,
                     owner.get("name"), owner.get("phone"), owner.get("email"),
-                    owner.get("mailingAddress"), estimated_value, estimated_equity,
+                    mailing_address, estimated_value, estimated_equity,
                     __import__("json").dumps(distress_signals),
                     is_lis_pendens,
                     __import__("json").dumps(prop),
