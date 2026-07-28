@@ -43,19 +43,18 @@ def _require_api_key() -> None:
 def search_distressed_properties(county: str, state: str, zip_codes: list[str] | None = None,
                                   filters: dict | None = None, limit: int = 100) -> list[dict]:
     """
-    Pulls a list of properties matching distress criteria.
-
-    filters example:
-        {
-            "absenteeOwner": True,
-            "taxDelinquent": True,
-            "equityPercent": {"min": 40},   # high-equity owners are more negotiable
-            "ownerOccupied": False,
-        }
-
-    Check BatchData's current API docs for the exact filter schema/endpoint path
-    at the time you build this -- API providers change field names periodically,
-    so verify against https://developer.batchdata.com before relying on this.
+    Pulls a list of properties for a county/state (optionally narrowed by
+    zip). The `filters` dict is passed through as extra searchCriteria
+    keys, but treat it as a hint, not a guarantee: a live test on
+    2026-07-28 sent {"absenteeOwner": True} and got back properties where
+    quickLists.absenteeOwner was actually False for 2 of 3 results -- this
+    request-side filter does NOT reliably narrow results as written
+    (either the key/location is wrong per BatchData's real schema, or it's
+    advisory-only on their end). Because of that, ingest_leads() below
+    does NOT trust this filter -- it re-checks every returned property's
+    real quickLists/valuation fields itself before inserting anything.
+    Treat `filters` here as a way to *reduce* the response size / API cost
+    for a rough pass, never as the actual qualifying logic.
     """
     _require_api_key()
     filters = filters or {}
@@ -124,27 +123,34 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 city = prop.get("address", {}).get("city", "")
                 zip_code = prop.get("address", {}).get("zip", "")
 
+                # VERIFIED against a real BatchData /property/search response
+                # on 2026-07-28 -- the actual shape nests everything under
+                # sub-objects, not flat top-level fields like the first draft
+                # of this code assumed:
+                #   quickLists.{taxDefault,absenteeOwner,preforeclosure,...}
+                #   foreclosure.status (key only present at all if applicable;
+                #     "Notice of Lis Pendens" is one real observed value)
+                #   valuation.{estimatedValue,equityCurrentEstimatedBalance,equityPercent}
+                quick_lists = prop.get("quickLists") or {}
                 distress_signals = []
-                if prop.get("taxDelinquent"):
+                if quick_lists.get("taxDefault"):
                     distress_signals.append("tax_delinquent")
-                if prop.get("absenteeOwner"):
+                if quick_lists.get("absenteeOwner"):
                     distress_signals.append("absentee_owner")
-                if prop.get("preForeclosure"):
+                if quick_lists.get("preforeclosure"):
                     distress_signals.append("pre_foreclosure")
 
-                # Check BatchData's actual field name for this at build time --
-                # verify against developer.batchdata.com. Common names are
-                # "lisPendens", "foreclosureStatus", or "activeForeclosure".
-                # This flag is a HARD GATE elsewhere in the codebase (see
-                # offer_drafting.py) -- do not skip verifying this field maps
-                # correctly before your first real ingest run.
-                is_lis_pendens = bool(prop.get("lisPendens") or prop.get("activeForeclosure"))
+                foreclosure_status = (prop.get("foreclosure") or {}).get("status", "")
+                is_lis_pendens = "lis pendens" in foreclosure_status.lower()
                 if is_lis_pendens:
                     distress_signals.append("lis_pendens_filed")
 
-                estimated_value = prop.get("estimatedValue") or 0
-                estimated_equity = prop.get("estimatedEquity") or 0
-                equity_percent = (estimated_equity / estimated_value * 100) if estimated_value else 0
+                valuation = prop.get("valuation") or {}
+                estimated_value = valuation.get("estimatedValue") or 0
+                estimated_equity = valuation.get("equityCurrentEstimatedBalance") or 0
+                equity_percent = valuation.get("equityPercent")
+                if equity_percent is None:
+                    equity_percent = (estimated_equity / estimated_value * 100) if estimated_value else 0
 
                 # HARD REJECT: no distress signal at all, OR equity too thin
                 # to support a below-market cash offer. This is what keeps a
