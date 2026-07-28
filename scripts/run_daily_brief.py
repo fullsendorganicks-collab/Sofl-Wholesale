@@ -5,6 +5,15 @@ their brief -- this is the multi-tenant-ready part: if you license this
 out later, one cron job serves every customer, nothing per-client to add.
 """
 
+import os
+import sys
+
+# Render's Cron Job runs this script directly (not via `python -m`), so the
+# project root isn't automatically on sys.path the way it is for the Web
+# Service's `uvicorn app.main:app` invocation -- add it explicitly or the
+# `app` package import below fails with ModuleNotFoundError.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from dotenv import load_dotenv
 load_dotenv(override=True)  # .env always wins over stale shell/session env vars
 
