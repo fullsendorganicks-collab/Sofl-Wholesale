@@ -4,14 +4,22 @@ Living reference doc. Update this whenever something changes (new account,
 new key, new fix, new decision) — this is the single source of truth for
 "what is this system and how do I operate it," not the chat history.
 
-Last updated: 2026-07-28
+Last updated: 2026-07-28 (evening — BatchData funded and tested for real)
 
-**Current status: fully built and deployed, paused on one blocker.**
-Everything works except automated lead/buyer sourcing, which needs
-BatchData funded ($50 minimum — see §3). Until then, use manual entry
-(§5). Once funded: run one real `/leads/ingest` and one real
-`/buyers/prospect` call, verify the field mapping actually matches what
-BatchData returns (§9, steps 2-4), then this is genuinely ready to work.
+**Current status: core loop proven working end-to-end with REAL data.**
+BatchData is funded ($50 paid) and `/leads/ingest` successfully pulled,
+qualified, skip-traced, and inserted a real property lead (2632 NE 29th
+Ct, Fort Lauderdale — real owner name + mailing address, real equity/value
+numbers), which then scored correctly via Claude. The field-name mapping
+that was previously unverified (§6) is now fixed and confirmed correct
+for search results and owner name/mailing address.
+
+**One real gap remains**: owner phone/email extraction from skip-trace is
+still unconfirmed — the endpoint returns *something* without crashing,
+but not in a shape the code recognizes as phone/email yet (see §6). This
+means offers can be drafted and mailed (real mailing address works) but
+not yet auto-emailed via Gmail on BatchData-sourced leads specifically,
+until that's resolved.
 
 ---
 
@@ -47,7 +55,7 @@ outbound action (offer emails, contracts) requires your explicit approval
 | Render | ✅ Live | Two services under "Soflo Wholesale" project: Web Service + Cron Job, both need the same env vars |
 | GitHub | ✅ Live | Private repo, `.env` and `client_secret.json` correctly gitignored |
 | Twilio (SMS) | ❌ Not set up | Deliberately skipped — costs money, email brief covers everything. `sms_service.py` is fully optional, app runs fine without it |
-| BatchData | ⚠️ Account created, NOT funded | Needs $50 minimum wallet balance before any lead/buyer sourcing works. API key is saved and confirmed reachable (got a real 403 "Insufficient balance", not a connection error) |
+| BatchData | ✅ Live, funded | $50 paid 2026-07-28. Property search confirmed FREE (Property Search Sessions = $0.00/request per their pricing page). Skip trace costs ~$0.07/property, only runs on properties that pass the qualifying filter. One real test run: 3 properties searched, 2 rejected by the filter (correctly), 1 inserted + skip-traced (~$0.07 spent total so far) |
 
 ## 4. What's proven working (real end-to-end tests done)
 
@@ -60,6 +68,8 @@ outbound action (offer emails, contracts) requires your explicit approval
 - Both Render services (Web Service + Cron Job) deployed and functioning
 - **Manual lead entry** (`POST /leads/manual`, "+ Add lead manually" button on dashboard) — tested end-to-end, inserts with `source='manual'`, flows through the same scoring/offer pipeline as any other lead
 - **Manual buyer entry** (`POST /buyers/manual`, "+ Add buyer manually" button on dashboard) — tested end-to-end, feeds `buyer_matching.py` the same as a BatchData-prospected buyer
+- **BatchData lead ingestion, full pipeline** (`POST /leads/ingest`) — tested end-to-end with real funded credits, 2026-07-28. Real property (2632 NE 29th Ct, Fort Lauderdale) searched → qualifying filter correctly rejected 2/3 properties (no distress signal or insufficient equity) → 1 passed → skip-traced → inserted with correct owner name + mailing address → scored by Claude. First fully-automated real lead in the system.
+- **Qualifying filter** — proven to actually reject: 2 of 3 real search results rejected for lacking a real distress signal or falling below the 30% equity threshold, not just scored low
 
 ## 5. Manual data entry (until BatchData is funded)
 
@@ -77,22 +87,34 @@ right now** — not a fallback. Both are on the dashboard:
 Use these freely for any property or buyer you already know about
 personally — no cost, no BatchData dependency.
 
-## 6. What's built but never tested with real data
+## 6. BatchData field mapping — what's confirmed vs. still open
 
-- `batchdata_service.py` (lead ingestion) — endpoint reachable, field-name mapping unverified against a real successful response. Now includes a hard qualifying filter (rejects properties with zero distress signals or equity below `min_equity_percent`, default 30%) — filter logic itself is straightforward Python, but its real-world effect depends on BatchData's actual returned equity/value numbers, still unverified
-- `buyer_acquisition.py` (buyer prospecting) — same, untested
+Real, hard-won findings from getting `/leads/ingest` working tonight —
+read this before touching `batchdata_service.py` again:
+
+**Confirmed correct** (verified against real API responses, 2026-07-28):
+- `/property/search` response: distress signals live under `quickLists.{taxDefault,absenteeOwner,preforeclosure}`, NOT flat top-level fields
+- Foreclosure/lis-pendens: `foreclosure.status` contains `"Notice of Lis Pendens"` when applicable (the `foreclosure` key may be absent/empty otherwise)
+- Valuation: `valuation.{estimatedValue,equityCurrentEstimatedBalance,equityPercent}`
+- **Owner name + mailing address**: `prop["owner"].{fullName,mailingAddress}` — already present in the search response itself, no skip-trace needed for these two fields
+- Passing `{"absenteeOwner": true}` etc. in the search request does NOT reliably filter results server-side (confirmed: 2 of 3 results had `absenteeOwner: false` despite the filter) — the client-side qualifying filter in `ingest_leads()` is what actually enforces criteria, not BatchData's request-side filter
+
+**Still unconfirmed / best-effort:**
+- `skip_trace()`'s actual response shape for phone/email. The one real call didn't crash (defensive fallback matched something) but didn't expose phone/email in a recognized field either — `owner_phone`/`owner_email` come back `null` on the one real lead so far. Code currently tries a few plausible field-name guesses; next real skip-trace call's outcome (or a `[batchdata_service] skip_trace: unrecognized...` log line in Render) will tell us the real shape
+- `buyer_acquisition.py` (`/property/sales-history` endpoint, buyer prospecting) — completely untested, likely has the same kind of field-mapping gap search/skip-trace both had
 - `deal_analysis.py` (ARV/MAO calculator) — logic only, no real comps run through it
-- `contract_generation.py` (Purchase Agreement + Assignment Agreement) — never actually generated a real document
-- `buyer_matching.py` — logic untested against a real deal, though buyers can now be added manually to test it without BatchData
-- Most directive types (`STALE_LEAD`, `CLOSING_DEADLINE`, `WIRE_FRAUD_VERIFICATION`, etc.) — never fired because no deal has ever existed
+- `contract_generation.py` — never actually generated a real document
+- `buyer_matching.py` — logic untested against a real deal (buyers table still empty of real entries)
+- Most directive types (`STALE_LEAD`, `CLOSING_DEADLINE`, `WIRE_FRAUD_VERIFICATION`, etc.) — never fired, no deal has ever existed
 
 ## 7. What's not built at all
 
 - No deal has ever moved past "offer drafted" — the under-contract → closing pipeline is unexercised, and there's no dashboard UI yet for creating a `deals` row or progressing its stage
 - `attorney_cleared_foreclosure` is still `FALSE` — correctly blocking any lis-pendens/foreclosure lead until that specific attorney conversation is confirmed
 - No dashboard button for contract generation yet (`contract_generation.py` exists and is API-reachable, just not wired into the UI)
+- Dashboard lead cards don't surface most of the rich data BatchData actually returns (tax history, listing history, demographics, lien info) — it's all sitting in `raw_payload`, just not displayed yet
 
-## 7. Compliance flags (orgs table)
+## 8. Compliance flags (orgs table)
 
 | Flag | Current value | What it blocks |
 |---|---|---|
@@ -104,24 +126,26 @@ attorney has specifically confirmed your letter/contract structure against
 FL Statute 501.1377.** This is a separate conversation from the general
 wholesaling clearance.
 
-## 8. Known issues / things to watch
+## 9. Known issues / things to watch
 
 - **Render free tier spins down when idle** — first request after inactivity can take 30-50s to respond. Not a bug, just the free-tier tradeoff.
 - **Dashboard password**: copy-pasting it sometimes fails (invisible characters from clipboard) — type manually if login fails unexpectedly.
-- **BatchData needs $50 minimum** to fund the wallet before any real lead/buyer data can be pulled.
+- **Render deploys can silently serve stale files** — happened once with the dashboard HTML (Render said "Deploy live" but served an old version). If a deploy looks live but the change isn't showing, use Manual Deploy → "Clear build cache & deploy" rather than a normal redeploy.
+- **BATCHDATA_API_KEY must be set on the Web Service specifically** — it was missing there once even though it was in `.env` locally, causing a `RuntimeError` on every ingest call. Check Render's Environment tab on the Web Service (not just the Cron Job) if ingestion ever fails with a "not set" error.
+- **Owner phone/email from skip-trace are not yet reliable** — see §6. Mailing address and owner name work; phone/email are best-effort until the real response shape is confirmed.
 
-## 9. Next steps, in priority order
+## 10. Next steps, in priority order
 
-1. Use manual lead/buyer entry (§5) to keep working the pipeline while BatchData is unfunded
-2. Fund BatchData ($50 minimum) when there's budget — unlocks automated lead + buyer sourcing
-3. Run one real `POST /leads/ingest` call, verify field mapping matches what BatchData actually returns (per original build plan's Rule 3 — don't trust the code's assumptions blindly)
-4. Run one real `POST /buyers/prospect` call, same verification
-5. Get the foreclosure-specific attorney confirmation, flip `attorney_cleared_foreclosure`
-6. Build a dashboard UI for creating/progressing a `deals` row once an offer gets a real "yes"
-7. Add a contract-generation button to the dashboard
+1. Run a larger real `/leads/ingest` batch (10-50 properties, not just 3) to confirm the pipeline holds up at volume, not just on one lucky match
+2. Resolve skip-trace phone/email extraction — check Render logs for the `[batchdata_service] skip_trace: unrecognized results shape, keys=[...]` line on the next real call to see the actual structure
+3. Run one real `POST /buyers/prospect` call, verify field mapping the same way search/skip-trace needed (per original build plan's Rule 3 — don't trust the code's assumptions blindly)
+4. Get the foreclosure-specific attorney confirmation, flip `attorney_cleared_foreclosure`
+5. Build a dashboard UI for creating/progressing a `deals` row once an offer gets a real "yes"
+6. Add a contract-generation button to the dashboard
+7. Surface more of BatchData's rich data (tax history, listing history) on the lead card — currently only in `raw_payload`
 8. Consider Twilio only if SMS urgency alerts become genuinely needed (not required for the system to work)
 
-## 10. How to update this file
+## 11. How to update this file
 
 Whenever something changes — a new key added, a bug found and fixed, a
 decision made about scope — add it here immediately, dated. This file
