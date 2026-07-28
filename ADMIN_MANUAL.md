@@ -6,6 +6,13 @@ new key, new fix, new decision) — this is the single source of truth for
 
 Last updated: 2026-07-28
 
+**Current status: fully built and deployed, paused on one blocker.**
+Everything works except automated lead/buyer sourcing, which needs
+BatchData funded ($50 minimum — see §3). Until then, use manual entry
+(§5). Once funded: run one real `/leads/ingest` and one real
+`/buyers/prospect` call, verify the field mapping actually matches what
+BatchData returns (§9, steps 2-4), then this is genuinely ready to work.
+
 ---
 
 ## 1. What this is
@@ -54,22 +61,7 @@ outbound action (offer emails, contracts) requires your explicit approval
 - **Manual lead entry** (`POST /leads/manual`, "+ Add lead manually" button on dashboard) — tested end-to-end, inserts with `source='manual'`, flows through the same scoring/offer pipeline as any other lead
 - **Manual buyer entry** (`POST /buyers/manual`, "+ Add buyer manually" button on dashboard) — tested end-to-end, feeds `buyer_matching.py` the same as a BatchData-prospected buyer
 
-## 5. What's built but never tested with real data
-
-- `batchdata_service.py` (lead ingestion) — endpoint reachable, field-name mapping unverified against a real successful response. Now includes a hard qualifying filter (rejects properties with zero distress signals or equity below `min_equity_percent`, default 30%) — filter logic itself is straightforward Python, but its real-world effect depends on BatchData's actual returned equity/value numbers, still unverified
-- `buyer_acquisition.py` (buyer prospecting) — same, untested
-- `deal_analysis.py` (ARV/MAO calculator) — logic only, no real comps run through it
-- `contract_generation.py` (Purchase Agreement + Assignment Agreement) — never actually generated a real document
-- `buyer_matching.py` — logic untested against a real deal, though buyers can now be added manually to test it without BatchData
-- Most directive types (`STALE_LEAD`, `CLOSING_DEADLINE`, `WIRE_FRAUD_VERIFICATION`, etc.) — never fired because no deal has ever existed
-
-## 6. What's not built at all
-
-- No deal has ever moved past "offer drafted" — the under-contract → closing pipeline is unexercised, and there's no dashboard UI yet for creating a `deals` row or progressing its stage
-- `attorney_cleared_foreclosure` is still `FALSE` — correctly blocking any lis-pendens/foreclosure lead until that specific attorney conversation is confirmed
-- No dashboard button for contract generation yet (`contract_generation.py` exists and is API-reachable, just not wired into the UI)
-
-## 4b. Manual data entry (until BatchData is funded)
+## 5. Manual data entry (until BatchData is funded)
 
 BatchData needs a $50 minimum wallet balance (see §3) that isn't funded
 yet, so **manual entry is the primary way real data enters this system
@@ -84,6 +76,21 @@ right now** — not a fallback. Both are on the dashboard:
 
 Use these freely for any property or buyer you already know about
 personally — no cost, no BatchData dependency.
+
+## 6. What's built but never tested with real data
+
+- `batchdata_service.py` (lead ingestion) — endpoint reachable, field-name mapping unverified against a real successful response. Now includes a hard qualifying filter (rejects properties with zero distress signals or equity below `min_equity_percent`, default 30%) — filter logic itself is straightforward Python, but its real-world effect depends on BatchData's actual returned equity/value numbers, still unverified
+- `buyer_acquisition.py` (buyer prospecting) — same, untested
+- `deal_analysis.py` (ARV/MAO calculator) — logic only, no real comps run through it
+- `contract_generation.py` (Purchase Agreement + Assignment Agreement) — never actually generated a real document
+- `buyer_matching.py` — logic untested against a real deal, though buyers can now be added manually to test it without BatchData
+- Most directive types (`STALE_LEAD`, `CLOSING_DEADLINE`, `WIRE_FRAUD_VERIFICATION`, etc.) — never fired because no deal has ever existed
+
+## 7. What's not built at all
+
+- No deal has ever moved past "offer drafted" — the under-contract → closing pipeline is unexercised, and there's no dashboard UI yet for creating a `deals` row or progressing its stage
+- `attorney_cleared_foreclosure` is still `FALSE` — correctly blocking any lis-pendens/foreclosure lead until that specific attorney conversation is confirmed
+- No dashboard button for contract generation yet (`contract_generation.py` exists and is API-reachable, just not wired into the UI)
 
 ## 7. Compliance flags (orgs table)
 
@@ -105,7 +112,7 @@ wholesaling clearance.
 
 ## 9. Next steps, in priority order
 
-1. Use manual lead/buyer entry (§4b) to keep working the pipeline while BatchData is unfunded
+1. Use manual lead/buyer entry (§5) to keep working the pipeline while BatchData is unfunded
 2. Fund BatchData ($50 minimum) when there's budget — unlocks automated lead + buyer sourcing
 3. Run one real `POST /leads/ingest` call, verify field mapping matches what BatchData actually returns (per original build plan's Rule 3 — don't trust the code's assumptions blindly)
 4. Run one real `POST /buyers/prospect` call, same verification
