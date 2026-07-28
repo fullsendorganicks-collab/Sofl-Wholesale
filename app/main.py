@@ -1,4 +1,9 @@
-from fastapi import FastAPI, HTTPException
+import os
+import hmac
+import secrets
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -11,6 +16,113 @@ from app.services import (batchdata_service, lead_scoring, deal_analysis,
 from app.db import get_conn
 
 app = FastAPI(title="Wholesale Agent API")
+
+# ---------------------------------------------------------------
+# DASHBOARD AUTH -- a single shared password, not a full user system.
+# Good enough for a solo operator; revisit if this ever has more than
+# one person logging in. Session tokens are opaque random strings held
+# server-side in memory (fine for one instance; would need a shared
+# store like Redis if this ever scales to multiple server processes).
+# ---------------------------------------------------------------
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD")
+_valid_sessions: set[str] = set()
+
+
+def _check_session(request: Request) -> None:
+    token = request.cookies.get("session")
+    if not token or token not in _valid_sessions:
+        raise HTTPException(status_code=401, detail="Not logged in")
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(req: LoginRequest, response: Response):
+    if not DASHBOARD_PASSWORD or not hmac.compare_digest(req.password, DASHBOARD_PASSWORD):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    token = secrets.token_urlsafe(32)
+    _valid_sessions.add(token)
+    response.set_cookie("session", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    return {"ok": True}
+
+
+@app.post("/api/logout")
+def logout(request: Request, response: Response):
+    token = request.cookies.get("session")
+    if token:
+        _valid_sessions.discard(token)
+    response.delete_cookie("session")
+    return {"ok": True}
+
+
+@app.get("/api/session")
+def check_session(request: Request):
+    token = request.cookies.get("session")
+    return {"logged_in": bool(token and token in _valid_sessions)}
+
+
+# ---------------------------------------------------------------
+# DASHBOARD DATA -- one combined endpoint so the frontend doesn't have
+# to make five separate calls to render the main view.
+# ---------------------------------------------------------------
+@app.get("/api/dashboard")
+def dashboard_data(request: Request, org_id: str):
+    _check_session(request)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT l.*, ls.score, ls.reasoning
+                FROM leads l
+                LEFT JOIN LATERAL (
+                    SELECT score, reasoning FROM lead_scores
+                    WHERE lead_id = l.id ORDER BY scored_at DESC LIMIT 1
+                ) ls ON true
+                WHERE l.org_id = %s
+                ORDER BY ls.score DESC NULLS LAST, l.created_at DESC
+                LIMIT 100
+            """, (org_id,))
+            leads = cur.fetchall()
+
+            cur.execute("""
+                SELECT o.*, l.address, l.owner_name, l.owner_email
+                FROM offers o JOIN leads l ON l.id = o.lead_id
+                WHERE l.org_id = %s
+                ORDER BY o.created_at DESC
+                LIMIT 50
+            """, (org_id,))
+            offers = cur.fetchall()
+
+            cur.execute("""
+                SELECT count(*) as c FROM leads WHERE org_id=%s AND status='new'
+            """, (org_id,))
+            new_leads = cur.fetchone()["c"]
+            cur.execute("""
+                SELECT count(*) as c FROM leads WHERE org_id=%s AND status='scored'
+            """, (org_id,))
+            scored_leads = cur.fetchone()["c"]
+            cur.execute("""
+                SELECT count(*) as c FROM deals WHERE org_id=%s AND stage NOT IN ('closed','dead')
+            """, (org_id,))
+            active_deals = cur.fetchone()["c"]
+            cur.execute("""
+                SELECT count(*) as c FROM offers o JOIN leads l ON l.id=o.lead_id
+                WHERE l.org_id=%s AND o.approval_status='pending_review'
+            """, (org_id,))
+            pending_offers = cur.fetchone()["c"]
+
+    directives = directive_engine.get_active_directives(org_id)
+
+    return {
+        "leads": leads,
+        "offers": offers,
+        "directives": directives,
+        "stats": {
+            "new_leads": new_leads, "scored_leads": scored_leads,
+            "active_deals": active_deals, "pending_offers": pending_offers,
+        },
+    }
 
 
 # ---------------------------------------------------------------
@@ -97,9 +209,10 @@ class DraftOfferRequest(BaseModel):
 
 
 @app.post("/offers/draft")
-def draft(req: DraftOfferRequest):
+def draft(req: DraftOfferRequest, request: Request):
     """Creates a DRAFT ONLY. Nothing is sent. Read the draft_letter field,
     then call /offers/{id}/approve if it looks right."""
+    _check_session(request)
     try:
         return offer_drafting.draft_offer(req.lead_id, req.offer_amount,
                                            req.sender_name, req.sender_phone)
@@ -128,7 +241,8 @@ class ApproveRequest(BaseModel):
 
 
 @app.post("/offers/{offer_id}/approve")
-def approve(offer_id: str, req: ApproveRequest):
+def approve(offer_id: str, req: ApproveRequest, request: Request):
+    _check_session(request)
     try:
         return offer_drafting.approve_offer(offer_id, req.approved_by)
     except ValueError as e:
@@ -136,13 +250,15 @@ def approve(offer_id: str, req: ApproveRequest):
 
 
 @app.post("/offers/{offer_id}/reject")
-def reject(offer_id: str):
+def reject(offer_id: str, request: Request):
+    _check_session(request)
     return offer_drafting.reject_offer(offer_id)
 
 
 @app.post("/offers/{offer_id}/send")
-def send(offer_id: str):
+def send(offer_id: str, request: Request):
     """Only works if the offer's approval_status is already 'approved'."""
+    _check_session(request)
     try:
         message_id = gmail_service.send_approved_offer(offer_id)
         return {"sent": True, "gmail_message_id": message_id}
@@ -294,3 +410,11 @@ def create_assignment_agreement(req: AssignmentAgreementRequest):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------
+# STATIC DASHBOARD -- serves app/static/index.html and its assets.
+# Mounted last so it never shadows an API route above.
+# ---------------------------------------------------------------
+_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+app.mount("/", StaticFiles(directory=_static_dir, html=True), name="static")

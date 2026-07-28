@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SoFlo Wholesale — Pipeline</title>
+<style>
+@font-face {
+  font-family: 'Fraunces';
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+  src: local('Fraunces'), local('Georgia');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  src: local('Inter'), local('Segoe UI');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+  src: local('IBM Plex Mono'), local('Consolas');
+}
+
+:root {
+  --bg: #f7f5f0;
+  --surface: #ffffff;
+  --surface-2: #efece4;
+  --border: #ddd8cc;
+  --ink: #1a1d19;
+  --ink-soft: #55584f;
+  --ink-faint: #8b8d82;
+  --accent: #2d6a4f;
+  --accent-soft: #e4efe9;
+  --gold: #a3843f;
+  --gold-soft: #f3ecd9;
+  --danger: #8b3a3a;
+  --danger-soft: #f5e6e4;
+  --shadow: 0 1px 2px rgba(26,29,25,0.04), 0 4px 16px rgba(26,29,25,0.06);
+  --radius: 10px;
+}
+:root[data-theme="dark"] {
+  --bg: #14170f;
+  --surface: #1b1f16;
+  --surface-2: #232819;
+  --border: #333a26;
+  --ink: #eef0e6;
+  --ink-soft: #b7bba9;
+  --ink-faint: #7d8271;
+  --accent: #6fbf9a;
+  --accent-soft: #1e2e26;
+  --gold: #d9bd6f;
+  --gold-soft: #2c2818;
+  --danger: #d98a8a;
+  --danger-soft: #2e1e1d;
+  --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14170f;
+    --surface: #1b1f16;
+    --surface-2: #232819;
+    --border: #333a26;
+    --ink: #eef0e6;
+    --ink-soft: #b7bba9;
+    --ink-faint: #7d8271;
+    --accent: #6fbf9a;
+    --accent-soft: #1e2e26;
+    --gold: #d9bd6f;
+    --gold-soft: #2c2818;
+    --danger: #d98a8a;
+    --danger-soft: #2e1e1d;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.35);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+.mono { font-family: 'IBM Plex Mono', 'Consolas', monospace; font-variant-numeric: tabular-nums; }
+
+/* ---------- Login ---------- */
+#login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 40px 32px;
+}
+.login-mark {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.login-title {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 500;
+  font-size: 26px;
+  color: var(--ink);
+  margin: 0 0 28px;
+}
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+  margin-bottom: 8px;
+}
+input[type="password"], input[type="text"], input[type="number"], textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 11px 13px;
+  transition: border-color 0.15s ease;
+}
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  padding: 11px 20px;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
+.btn-ghost { background: transparent; border-color: var(--border); color: var(--ink-soft); }
+.btn-ghost:hover { border-color: var(--ink-faint); color: var(--ink); }
+.btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger-soft); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-block { width: 100%; margin-top: 22px; }
+.login-error {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 12px;
+  min-height: 18px;
+}
+
+/* ---------- App shell ---------- */
+#app { display: none; min-height: 100vh; }
+#app.visible { display: block; }
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 28px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.topbar-left { display: flex; align-items: baseline; gap: 12px; }
+.brand {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 600;
+  font-size: 19px;
+  color: var(--ink);
+}
+.brand-sub {
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.stat-tile {
+  background: var(--surface);
+  padding: 18px 24px;
+}
+.stat-value {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 500;
+  font-size: 30px;
+  color: var(--ink);
+  line-height: 1;
+}
+.stat-value.accent { color: var(--accent); }
+.stat-value.gold { color: var(--gold); }
+.stat-label {
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 6px;
+}
+
+main {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 40px 0 16px;
+}
+.section-head:first-child { margin-top: 0; }
+.section-title {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 500;
+  font-size: 20px;
+}
+.section-count {
+  font-size: 13px;
+  color: var(--ink-faint);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.empty-state {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 14px;
+}
+
+/* ---------- Directives ---------- */
+.directive {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.directive.urgent { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); background: var(--danger-soft); }
+.directive.today { border-color: color-mix(in srgb, var(--gold) 35%, var(--border)); background: var(--gold-soft); }
+.priority-dot {
+  width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0;
+}
+.priority-dot.urgent { background: var(--danger); }
+.priority-dot.today { background: var(--gold); }
+.priority-dot.this_week { background: var(--ink-faint); }
+.directive-text { font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
+.directive-type {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: block;
+  margin-bottom: 3px;
+}
+
+/* ---------- Lead cards ---------- */
+.lead-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.lead-main {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 22px;
+}
+.lead-score {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 600;
+  font-size: 32px;
+  line-height: 1;
+  min-width: 56px;
+  text-align: center;
+  color: var(--ink-faint);
+}
+.lead-score.hi { color: var(--accent); }
+.lead-score.mid { color: var(--gold); }
+.lead-score-label {
+  display: block;
+  font-family: 'Inter', sans-serif;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: 2px;
+}
+.lead-body { flex: 1; min-width: 0; }
+.lead-address {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.lead-meta {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-faint);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 9px;
+  border-radius: 100px;
+  background: var(--surface-2);
+  color: var(--ink-soft);
+}
+.tag.status-new { background: var(--accent-soft); color: var(--accent); }
+.tag.status-scored { background: var(--gold-soft); color: var(--gold); }
+.tag.lis-pendens { background: var(--danger-soft); color: var(--danger); }
+.lead-reasoning {
+  padding: 0 22px 18px 98px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+.lead-actions { padding: 0 22px 18px 98px; display: flex; gap: 10px; }
+
+/* ---------- Offer cards ---------- */
+.offer-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.offer-head {
+  padding: 18px 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.offer-address { font-family: 'Fraunces', Georgia, serif; font-size: 17px; font-weight: 500; }
+.offer-amount { font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: var(--gold); font-weight: 600; }
+.status-pill {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 100px;
+}
+.status-pill.pending_review { background: var(--gold-soft); color: var(--gold); }
+.status-pill.approved { background: var(--accent-soft); color: var(--accent); }
+.status-pill.sent { background: var(--surface-2); color: var(--ink-soft); }
+.status-pill.rejected { background: var(--danger-soft); color: var(--danger); }
+.offer-letter {
+  margin: 0 22px 18px;
+  padding: 16px 18px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.offer-actions { padding: 0 22px 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+.offer-warning {
+  margin: 0 22px 14px;
+  padding: 10px 14px;
+  background: var(--danger-soft);
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--danger);
+}
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 100;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (max-width: 560px) {
+  .lead-reasoning, .lead-actions { padding-left: 22px; }
+  .lead-main { flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-mark">SoFlo Wholesale</div>
+    <h1 class="login-title">Sign in</h1>
+    <label class="field-label" for="pw">Password</label>
+    <input type="password" id="pw" autocomplete="current-password" />
+    <button class="btn btn-primary btn-block" id="login-btn">Sign in</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="brand">SoFlo Wholesale</span>
+      <span class="brand-sub">Pipeline</span>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-ghost" id="refresh-btn">Refresh</button>
+      <button class="btn btn-ghost" id="logout-btn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="stats-row" id="stats-row"></div>
+
+  <main>
+    <section id="directives-section">
+      <div class="section-head">
+        <span class="section-title">Needs attention</span>
+        <span class="section-count" id="directives-count"></span>
+      </div>
+      <div id="directives-list"></div>
+    </section>
+
+    <section id="offers-section">
+      <div class="section-head">
+        <span class="section-title">Offers</span>
+        <span class="section-count" id="offers-count"></span>
+      </div>
+      <div id="offers-list"></div>
+    </section>
+
+    <section id="leads-section">
+      <div class="section-head">
+        <span class="section-title">Leads</span>
+        <span class="section-count" id="leads-count"></span>
+      </div>
+      <div id="leads-list"></div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const ORG_ID = new URLSearchParams(location.search).get('org_id') || '62a17f85-15df-4c49-aca1-c75a3a36c120';
+
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { credentials: 'include', headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (res.status === 401) { showLogin(); throw new Error('Not logged in'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || 'Request failed');
+  return data;
+}
+
+function showLogin() {
+  $('#login-screen').style.display = 'flex';
+  $('#app').classList.remove('visible');
+}
+function showApp() {
+  $('#login-screen').style.display = 'none';
+  $('#app').classList.add('visible');
+  loadDashboard();
+}
+
+$('#login-btn').addEventListener('click', doLogin);
+$('#pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+async function doLogin() {
+  const pw = $('#pw').value;
+  $('#login-error').textContent = '';
+  try {
+    await api('/api/login', { method: 'POST', body: JSON.stringify({ password: pw }) });
+    $('#pw').value = '';
+    showApp();
+  } catch (e) {
+    $('#login-error').textContent = 'Incorrect password.';
+  }
+}
+
+$('#logout-btn').addEventListener('click', async () => {
+  await api('/api/logout', { method: 'POST' });
+  showLogin();
+});
+$('#refresh-btn').addEventListener('click', loadDashboard);
+
+function scoreClass(score) {
+  if (score === null || score === undefined) return '';
+  if (score >= 70) return 'hi';
+  if (score >= 40) return 'mid';
+  return '';
+}
+
+function fmtMoney(n) {
+  return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function renderStats(stats) {
+  const row = $('#stats-row');
+  row.innerHTML = '';
+  const tiles = [
+    ['new_leads', 'New Leads', ''],
+    ['scored_leads', 'Scored', 'gold'],
+    ['active_deals', 'Active Deals', 'accent'],
+    ['pending_offers', 'Awaiting Review', 'gold'],
+  ];
+  for (const [key, label, cls] of tiles) {
+    const tile = el('div', 'stat-tile');
+    tile.appendChild(el('div', 'stat-value mono ' + cls, stats[key]));
+    tile.appendChild(el('div', 'stat-label', label));
+    row.appendChild(tile);
+  }
+}
+
+function renderDirectives(directives) {
+  $('#directives-count').textContent = directives.length;
+  const list = $('#directives-list');
+  list.innerHTML = '';
+  if (!directives.length) {
+    list.appendChild(el('div', 'empty-state', 'Nothing needs your attention right now.'));
+    return;
+  }
+  for (const d of directives) {
+    const row = el('div', 'directive ' + d.priority);
+    row.appendChild(el('div', 'priority-dot ' + d.priority));
+    const text = el('div', 'directive-text');
+    text.appendChild(el('span', 'directive-type', d.directive_type.replace(/_/g, ' ')));
+    text.appendChild(document.createTextNode(d.message));
+    row.appendChild(text);
+    list.appendChild(row);
+  }
+}
+
+function renderOffers(offers) {
+  $('#offers-count').textContent = offers.length;
+  const list = $('#offers-list');
+  list.innerHTML = '';
+  if (!offers.length) {
+    list.appendChild(el('div', 'empty-state', 'No offers drafted yet.'));
+    return;
+  }
+  for (const o of offers) {
+    const card = el('div', 'offer-card');
+
+    const head = el('div', 'offer-head');
+    const left = el('div');
+    left.appendChild(el('div', 'offer-address', o.address));
+    left.appendChild(el('div', 'offer-amount mono', fmtMoney(o.offer_amount)));
+    head.appendChild(left);
+    head.appendChild(el('span', 'status-pill ' + o.approval_status, o.approval_status.replace(/_/g, ' ')));
+    card.appendChild(head);
+
+    if (o.compliance_warning) {
+      card.appendChild(el('div', 'offer-warning', o.compliance_warning));
+    }
+
+    card.appendChild(el('div', 'offer-letter', o.draft_letter));
+
+    const actions = el('div', 'offer-actions');
+    if (o.approval_status === 'pending_review') {
+      const approveBtn = el('button', 'btn btn-primary', 'Approve');
+      approveBtn.onclick = () => approveOffer(o.id);
+      const rejectBtn = el('button', 'btn btn-danger', 'Reject');
+      rejectBtn.onclick = () => rejectOffer(o.id);
+      actions.appendChild(approveBtn);
+      actions.appendChild(rejectBtn);
+    } else if (o.approval_status === 'approved') {
+      const sendBtn = el('button', 'btn btn-primary', 'Send via Gmail');
+      sendBtn.onclick = () => sendOffer(o.id);
+      actions.appendChild(sendBtn);
+    }
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+}
+
+async function approveOffer(id) {
+  try {
+    await api(`/offers/${id}/approve`, { method: 'POST', body: JSON.stringify({ approved_by: 'Nick' }) });
+    toast('Offer approved.');
+    loadDashboard();
+  } catch (e) { toast(e.message); }
+}
+async function rejectOffer(id) {
+  try {
+    await api(`/offers/${id}/reject`, { method: 'POST' });
+    toast('Offer rejected.');
+    loadDashboard();
+  } catch (e) { toast(e.message); }
+}
+async function sendOffer(id) {
+  if (!confirm('Send this offer via Gmail now? This actually contacts the seller.')) return;
+  try {
+    await api(`/offers/${id}/send`, { method: 'POST' });
+    toast('Offer sent.');
+    loadDashboard();
+  } catch (e) { toast(e.message); }
+}
+
+function renderLeads(leads) {
+  $('#leads-count').textContent = leads.length;
+  const list = $('#leads-list');
+  list.innerHTML = '';
+  if (!leads.length) {
+    list.appendChild(el('div', 'empty-state', 'No leads yet. Connect BatchData or add one manually to get started.'));
+    return;
+  }
+  for (const lead of leads) {
+    const card = el('div', 'lead-card');
+    const main = el('div', 'lead-main');
+
+    const scoreBox = el('div', 'lead-score ' + scoreClass(lead.score));
+    scoreBox.innerHTML = (lead.score !== null ? Math.round(lead.score) : '—') + '<span class="lead-score-label">Score</span>';
+    main.appendChild(scoreBox);
+
+    const body = el('div', 'lead-body');
+    body.appendChild(el('div', 'lead-address', lead.address));
+    const meta = el('div', 'lead-meta');
+    meta.appendChild(el('span', 'tag status-' + lead.status, lead.status));
+    if (lead.is_lis_pendens_filed) meta.appendChild(el('span', 'tag lis-pendens', 'lis pendens'));
+    if (lead.estimated_value) meta.appendChild(el('span', 'mono', fmtMoney(lead.estimated_value) + ' est.'));
+    if (lead.equity_estimate) meta.appendChild(el('span', 'mono', fmtMoney(lead.equity_estimate) + ' equity'));
+    body.appendChild(meta);
+    main.appendChild(body);
+    card.appendChild(main);
+
+    if (lead.reasoning) {
+      card.appendChild(el('div', 'lead-reasoning', lead.reasoning));
+    }
+
+    if (lead.status === 'scored') {
+      const actions = el('div', 'lead-actions');
+      const draftBtn = el('button', 'btn btn-primary', 'Draft Offer');
+      draftBtn.onclick = () => draftOffer(lead);
+      actions.appendChild(draftBtn);
+      card.appendChild(actions);
+    }
+
+    list.appendChild(card);
+  }
+}
+
+async function draftOffer(lead) {
+  const amount = prompt(`Offer amount for ${lead.address}?`, lead.estimated_value ? Math.round(lead.estimated_value * 0.6) : '');
+  if (!amount) return;
+  try {
+    await api('/offers/draft', {
+      method: 'POST',
+      body: JSON.stringify({
+        lead_id: lead.id, offer_amount: Number(amount),
+        sender_name: 'Nick', sender_phone: '555-0100',
+      }),
+    });
+    toast('Offer drafted — review it below before approving.');
+    loadDashboard();
+  } catch (e) { toast(e.message); }
+}
+
+async function loadDashboard() {
+  try {
+    const data = await api(`/api/dashboard?org_id=${ORG_ID}`);
+    renderStats(data.stats);
+    renderDirectives(data.directives);
+    renderOffers(data.offers);
+    renderLeads(data.leads);
+  } catch (e) {
+    if (e.message !== 'Not logged in') toast(e.message);
+  }
+}
+
+(async function init() {
+  try {
+    const { logged_in } = await api('/api/session');
+    if (logged_in) showApp(); else showLogin();
+  } catch (e) {
+    showLogin();
+  }
+})();
+</script>
+</body>
+</html>
