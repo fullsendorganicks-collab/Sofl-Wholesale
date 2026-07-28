@@ -388,12 +388,49 @@ main {
 .tag.status-scored { background: var(--gold-soft); color: var(--gold); }
 .tag.lis-pendens { background: var(--danger-soft); color: var(--danger); }
 .lead-reasoning {
-  padding: 0 22px 18px 98px;
+  padding: 0 22px 12px 98px;
+}
+.lead-reasoning summary {
+  font-size: 12.5px;
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-weight: 600;
+}
+.lead-reasoning summary::-webkit-details-marker { display: none; }
+.lead-reasoning summary::before { content: '▸ '; }
+.lead-reasoning[open] summary::before { content: '▾ '; }
+.lead-reasoning-text {
   font-size: 13.5px;
   color: var(--ink-soft);
   line-height: 1.6;
+  margin-top: 8px;
 }
-.lead-actions { padding: 0 22px 18px 98px; display: flex; gap: 10px; }
+.lead-actions { padding: 0 22px 18px 98px; display: flex; gap: 10px; align-items: center; }
+.btn-ghost-sm {
+  background: transparent;
+  border: none;
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 6px 4px;
+}
+.btn-ghost-sm:hover { color: var(--ink-soft); }
+.lead-raw {
+  margin: 0 22px 18px 98px;
+  background: var(--surface-2);
+  border-radius: 7px;
+  padding: 12px 14px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  max-height: 260px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 
 /* ---------- Offer cards ---------- */
 .offer-card {
@@ -943,19 +980,62 @@ function renderLeads(leads) {
     card.appendChild(main);
 
     if (lead.reasoning) {
-      card.appendChild(el('div', 'lead-reasoning', lead.reasoning));
+      const details = document.createElement('details');
+      details.className = 'lead-reasoning';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Why this score';
+      details.appendChild(summary);
+      details.appendChild(el('div', 'lead-reasoning-text', lead.reasoning));
+      card.appendChild(details);
     }
 
+    const actions = el('div', 'lead-actions');
     if (lead.status === 'scored') {
-      const actions = el('div', 'lead-actions');
       const draftBtn = el('button', 'btn btn-primary', 'Draft Offer');
       draftBtn.onclick = () => draftOffer(lead);
       actions.appendChild(draftBtn);
-      card.appendChild(actions);
     }
+    const rawBtn = el('button', 'btn-ghost-sm', 'View raw data');
+    rawBtn.onclick = () => toggleRawData(lead.id, rawBtn);
+    actions.appendChild(rawBtn);
+    const dismissBtn = el('button', 'btn-ghost-sm', 'Dismiss');
+    dismissBtn.onclick = () => dismissLead(lead.id);
+    actions.appendChild(dismissBtn);
+    card.appendChild(actions);
+
+    const rawBox = el('div', 'lead-raw');
+    rawBox.id = `raw-${lead.id}`;
+    rawBox.style.display = 'none';
+    card.appendChild(rawBox);
 
     list.appendChild(card);
   }
+}
+
+async function toggleRawData(leadId, btn) {
+  const box = document.getElementById(`raw-${leadId}`);
+  if (box.style.display === 'none') {
+    if (!box.textContent) {
+      try {
+        const lead = await api(`/leads/${leadId}`);
+        box.textContent = JSON.stringify(lead.raw_payload || {}, null, 2);
+      } catch (e) { toast(e.message); return; }
+    }
+    box.style.display = 'block';
+    btn.textContent = 'Hide raw data';
+  } else {
+    box.style.display = 'none';
+    btn.textContent = 'View raw data';
+  }
+}
+
+async function dismissLead(leadId) {
+  if (!confirm('Mark this lead as dead? It will stop showing up on the dashboard.')) return;
+  try {
+    await api(`/leads/${leadId}/dismiss`, { method: 'PATCH' });
+    toast('Lead dismissed.');
+    loadDashboard();
+  } catch (e) { toast(e.message); }
 }
 
 async function draftOffer(lead) {

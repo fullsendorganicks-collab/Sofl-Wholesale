@@ -79,7 +79,7 @@ def dashboard_data(request: Request, org_id: str):
                     SELECT score, reasoning FROM lead_scores
                     WHERE lead_id = l.id ORDER BY scored_at DESC LIMIT 1
                 ) ls ON true
-                WHERE l.org_id = %s
+                WHERE l.org_id = %s AND l.status != 'dead'
                 ORDER BY ls.score DESC NULLS LAST, l.created_at DESC
                 LIMIT 100
             """, (org_id,))
@@ -142,17 +142,23 @@ class IngestRequest(BaseModel):
     filters: dict | None = None
     limit: int = 100
     min_equity_percent: float = 30.0
+    max_skip_traces: int = 5
+    dry_run: bool = False
 
 
 @app.post("/leads/ingest")
 def ingest_leads(req: IngestRequest, request: Request):
     """Only properties with at least one real distress signal AND meeting
     the minimum equity threshold get inserted -- see batchdata_service.py.
-    Response shows both inserted and rejected counts so the filter's actual
-    effect is visible, not just trusted."""
+    Response shows inserted/rejected/capped counts and estimated_cost_usd
+    so both the filter's effect AND real spend are visible, not trusted.
+    max_skip_traces caps real BatchData spend per call (default 5, ~$0.35
+    max). Set dry_run=true to see what WOULD qualify without spending
+    anything -- recommended before any real run with a new county/filter."""
     _check_session(request)
     return batchdata_service.ingest_leads(req.org_id, req.county, req.state, req.zip_codes,
-                                           req.filters, req.limit, req.min_equity_percent)
+                                           req.filters, req.limit, req.min_equity_percent,
+                                           req.max_skip_traces, req.dry_run)
 
 
 class ManualLeadRequest(BaseModel):
@@ -225,6 +231,38 @@ def list_leads(org_id: str, status: str | None = None, min_score: float | None =
         with conn.cursor() as cur:
             cur.execute(query, params)
             return cur.fetchall()
+
+
+@app.get("/leads/{lead_id}")
+def get_lead(lead_id: str, request: Request):
+    """Used by the dashboard's 'View raw data' toggle -- returns the full
+    lead row including raw_payload, which /leads and /api/dashboard already
+    include but this exists for a targeted single-lead fetch."""
+    _check_session(request)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM leads WHERE id = %s", (lead_id,))
+            lead = cur.fetchone()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return lead
+
+
+@app.patch("/leads/{lead_id}/dismiss")
+def dismiss_lead(lead_id: str, request: Request):
+    """Marks a lead dead so it stops surfacing, without deleting the
+    record -- used by the dashboard's 'Dismiss' button."""
+    _check_session(request)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE leads SET status = 'dead', updated_at = now()
+                WHERE id = %s RETURNING *
+            """, (lead_id,))
+            lead = cur.fetchone()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return lead
 
 
 # ---------------------------------------------------------------

@@ -114,7 +114,8 @@ def skip_trace(address: str, city: str, state: str, zip_code: str) -> dict:
 
 def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | None = None,
                   filters: dict | None = None, limit: int = 100,
-                  min_equity_percent: float = 30.0) -> dict:
+                  min_equity_percent: float = 30.0, max_skip_traces: int = 5,
+                  dry_run: bool = False) -> dict:
     """
     Pulls properties + skip traces each one + inserts into `leads` table.
 
@@ -126,11 +127,27 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
     "only properties that actually work for wholesaling enter the pipeline
     at all," rather than trusting lead_scoring.py to sort it out downstream.
 
-    Returns a dict with counts: inserted vs rejected, so the filter's
-    actual effect is visible, not just trusted.
+    COST SAFETY RAIL: skip_trace() is the only paid call in this function
+    (~$0.07/property per BatchData's pricing). There was previously NO cap
+    on how many properties could get skip-traced in one call -- a single
+    ingest_leads() call with a large `limit` and a permissive filter could
+    silently rack up real charges with no ceiling, which is exactly what
+    happened during testing on 2026-07-28 (spent far more than expected
+    across a handful of calls). max_skip_traces caps real spend per call
+    regardless of how many properties pass the filter -- once hit, further
+    qualifying properties are still counted as inserted=0 and reported
+    separately as capped, not silently skip-traced anyway.
+
+    dry_run=True runs search + the qualifying filter but NEVER calls
+    skip_trace() or inserts anything -- use this to see how many
+    properties WOULD qualify and get charged before spending anything.
+
+    Returns a dict with counts: inserted vs rejected vs capped, so the
+    filter's actual effect AND the real cost are both visible, not trusted.
     """
     properties = search_distressed_properties(county, state, zip_codes, filters, limit)
-    inserted, rejected = 0, 0
+    inserted, rejected, capped = 0, 0, 0
+    skip_traces_used = 0
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -175,6 +192,16 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                     rejected += 1
                     continue
 
+                # COST CAP: this property qualified, but skip-tracing it is a
+                # real, paid call. If we've already hit max_skip_traces for
+                # this run, stop spending -- report it as capped rather than
+                # silently skip-tracing anyway. This is the fix for the real
+                # incident on 2026-07-28 where uncapped skip-tracing across
+                # several ingest calls spent far more than expected.
+                if skip_traces_used >= max_skip_traces:
+                    capped += 1
+                    continue
+
                 # VERIFIED 2026-07-28: /property/search's own response already
                 # includes real owner name + mailing address under prop["owner"]
                 # (owner.fullName, owner.names, owner.mailingAddress) -- confirmed
@@ -189,7 +216,14 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 search_owner = prop.get("owner") or {}
                 owner_name = search_owner.get("fullName")
 
+                if dry_run:
+                    # Would qualify and would be skip-traced, but dry_run means
+                    # don't actually spend anything or write anything.
+                    inserted += 1
+                    continue
+
                 trace = skip_trace(address, city, state, zip_code)
+                skip_traces_used += 1
                 trace_owner = trace.get("owner") or {}
                 # Try a few plausible field-name variants for phone/email since
                 # skip-trace's real shape for contact info is still unconfirmed.
@@ -227,4 +261,11 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 ))
                 inserted += 1
 
-    return {"inserted": inserted, "rejected_no_distress_or_low_equity": rejected}
+    return {
+        "inserted": inserted,
+        "rejected_no_distress_or_low_equity": rejected,
+        "capped_at_max_skip_traces": capped,
+        "skip_traces_used": skip_traces_used,
+        "estimated_cost_usd": round(skip_traces_used * 0.07, 2),
+        "dry_run": dry_run,
+    }
