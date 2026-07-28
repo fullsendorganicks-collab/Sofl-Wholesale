@@ -440,6 +440,66 @@ main {
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ---------- Buyer cards ---------- */
+.buyer-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.buyer-name { font-family: 'Fraunces', Georgia, serif; font-size: 16px; font-weight: 500; }
+.buyer-meta { font-size: 12.5px; color: var(--ink-faint); margin-top: 3px; }
+.buyer-contact { font-size: 13px; color: var(--ink-soft); text-align: right; }
+
+/* ---------- Add-record buttons + modal ---------- */
+.add-btn-row { display: flex; gap: 10px; margin-bottom: 16px; }
+.btn-add {
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+.btn-add:hover { border-color: var(--accent); color: var(--accent); border-style: solid; }
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 20px;
+  z-index: 50;
+  overflow-y: auto;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  width: 100%;
+  max-width: 460px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 28px;
+}
+.modal-title {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 21px;
+  font-weight: 500;
+  margin: 0 0 20px;
+}
+.form-grid { display: grid; gap: 14px; }
+.form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.modal-actions { display: flex; gap: 10px; margin-top: 22px; }
+.modal-actions .btn { flex: 1; }
+
 @media (max-width: 560px) {
   .lead-reasoning, .lead-actions { padding-left: 22px; }
   .lead-main { flex-wrap: wrap; }
@@ -495,12 +555,138 @@ main {
         <span class="section-title">Leads</span>
         <span class="section-count" id="leads-count"></span>
       </div>
+      <div class="add-btn-row">
+        <button class="btn btn-add" id="add-lead-btn">+ Add lead manually</button>
+      </div>
       <div id="leads-list"></div>
+    </section>
+
+    <section id="buyers-section">
+      <div class="section-head">
+        <span class="section-title">Buyers</span>
+        <span class="section-count" id="buyers-count"></span>
+      </div>
+      <div class="add-btn-row">
+        <button class="btn btn-add" id="add-buyer-btn">+ Add buyer manually</button>
+      </div>
+      <div id="buyers-list"></div>
     </section>
   </main>
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="add-lead-modal">
+  <div class="modal">
+    <h2 class="modal-title">Add a lead</h2>
+    <div class="form-grid">
+      <div>
+        <label class="field-label" for="lead-address">Property address *</label>
+        <input type="text" id="lead-address" placeholder="123 Main St" />
+      </div>
+      <div class="form-row-2">
+        <div>
+          <label class="field-label" for="lead-city">City</label>
+          <input type="text" id="lead-city" />
+        </div>
+        <div>
+          <label class="field-label" for="lead-zip">Zip</label>
+          <input type="text" id="lead-zip" />
+        </div>
+      </div>
+      <div class="form-row-2">
+        <div>
+          <label class="field-label" for="lead-state">State</label>
+          <input type="text" id="lead-state" value="FL" />
+        </div>
+        <div>
+          <label class="field-label" for="lead-county">County</label>
+          <input type="text" id="lead-county" />
+        </div>
+      </div>
+      <div>
+        <label class="field-label" for="lead-owner-name">Owner name</label>
+        <input type="text" id="lead-owner-name" />
+      </div>
+      <div class="form-row-2">
+        <div>
+          <label class="field-label" for="lead-owner-phone">Owner phone</label>
+          <input type="text" id="lead-owner-phone" />
+        </div>
+        <div>
+          <label class="field-label" for="lead-owner-email">Owner email</label>
+          <input type="text" id="lead-owner-email" />
+        </div>
+      </div>
+      <div class="form-row-2">
+        <div>
+          <label class="field-label" for="lead-value">Estimated value</label>
+          <input type="number" id="lead-value" placeholder="250000" />
+        </div>
+        <div>
+          <label class="field-label" for="lead-equity">Estimated equity</label>
+          <input type="number" id="lead-equity" placeholder="180000" />
+        </div>
+      </div>
+      <div>
+        <label class="field-label" for="lead-signals">Distress signals (comma-separated)</label>
+        <input type="text" id="lead-signals" placeholder="tax_delinquent, absentee_owner" />
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="lead-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="lead-save-btn">Add lead</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="add-buyer-modal">
+  <div class="modal">
+    <h2 class="modal-title">Add a buyer</h2>
+    <div class="form-grid">
+      <div>
+        <label class="field-label" for="buyer-name">Name / entity *</label>
+        <input type="text" id="buyer-name" placeholder="Jane Smith / Smith Capital LLC" />
+      </div>
+      <div>
+        <label class="field-label" for="buyer-company">Company</label>
+        <input type="text" id="buyer-company" />
+      </div>
+      <div class="form-row-2">
+        <div>
+          <label class="field-label" for="buyer-email">Email</label>
+          <input type="text" id="buyer-email" />
+        </div>
+        <div>
+          <label class="field-label" for="buyer-phone">Phone</label>
+          <input type="text" id="buyer-phone" />
+        </div>
+      </div>
+      <div class="form-row-2">
+        <div>
+          <label class="field-label" for="buyer-price-min">Buy box min $</label>
+          <input type="number" id="buyer-price-min" />
+        </div>
+        <div>
+          <label class="field-label" for="buyer-price-max">Buy box max $</label>
+          <input type="number" id="buyer-price-max" />
+        </div>
+      </div>
+      <div>
+        <label class="field-label" for="buyer-counties">Counties (comma-separated)</label>
+        <input type="text" id="buyer-counties" placeholder="Broward, Palm Beach" />
+      </div>
+      <div>
+        <label class="field-label" for="buyer-notes">Notes</label>
+        <input type="text" id="buyer-notes" />
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="buyer-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="buyer-save-btn">Add buyer</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const ORG_ID = new URLSearchParams(location.search).get('org_id') || '62a17f85-15df-4c49-aca1-c75a3a36c120';
@@ -727,6 +913,111 @@ async function draftOffer(lead) {
   } catch (e) { toast(e.message); }
 }
 
+function renderBuyers(buyers) {
+  $('#buyers-count').textContent = buyers.length;
+  const list = $('#buyers-list');
+  list.innerHTML = '';
+  if (!buyers.length) {
+    list.appendChild(el('div', 'empty-state', 'No buyers yet. Add one you already know, or fund BatchData to prospect automatically.'));
+    return;
+  }
+  for (const b of buyers) {
+    const card = el('div', 'buyer-card');
+    const left = el('div');
+    left.appendChild(el('div', 'buyer-name', b.name + (b.company ? ' — ' + b.company : '')));
+    const box = b.buy_box || {};
+    const metaParts = [];
+    if (box.price_min || box.price_max) {
+      metaParts.push(`${box.price_min ? fmtMoney(box.price_min) : 'any'} – ${box.price_max ? fmtMoney(box.price_max) : 'any'}`);
+    }
+    if (box.counties && box.counties.length) metaParts.push(box.counties.join(', '));
+    if (b.closed_deals_count) metaParts.push(`${b.closed_deals_count} closed`);
+    left.appendChild(el('div', 'buyer-meta mono', metaParts.join('  •  ') || 'No buy box set'));
+    card.appendChild(left);
+
+    const right = el('div', 'buyer-contact');
+    if (b.email) right.appendChild(el('div', '', b.email));
+    if (b.phone) right.appendChild(el('div', '', b.phone));
+    card.appendChild(right);
+
+    list.appendChild(card);
+  }
+}
+
+/* ---------- Add Lead modal ---------- */
+const leadModal = $('#add-lead-modal');
+$('#add-lead-btn').onclick = () => leadModal.classList.add('show');
+$('#lead-cancel-btn').onclick = () => leadModal.classList.remove('show');
+
+$('#lead-save-btn').onclick = async () => {
+  const address = $('#lead-address').value.trim();
+  if (!address) { toast('Address is required.'); return; }
+  const signals = $('#lead-signals').value.split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    await api('/leads/manual', {
+      method: 'POST',
+      body: JSON.stringify({
+        org_id: ORG_ID,
+        address,
+        city: $('#lead-city').value.trim() || null,
+        state: $('#lead-state').value.trim() || null,
+        zip: $('#lead-zip').value.trim() || null,
+        county: $('#lead-county').value.trim() || null,
+        owner_name: $('#lead-owner-name').value.trim() || null,
+        owner_phone: $('#lead-owner-phone').value.trim() || null,
+        owner_email: $('#lead-owner-email').value.trim() || null,
+        estimated_value: $('#lead-value').value ? Number($('#lead-value').value) : null,
+        equity_estimate: $('#lead-equity').value ? Number($('#lead-equity').value) : null,
+        distress_signals: signals,
+      }),
+    });
+    ['#lead-address','#lead-city','#lead-zip','#lead-county','#lead-owner-name',
+     '#lead-owner-phone','#lead-owner-email','#lead-value','#lead-equity','#lead-signals']
+      .forEach(sel => $(sel).value = '');
+    $('#lead-state').value = 'FL';
+    leadModal.classList.remove('show');
+    toast('Lead added. Score it from the API, or wait for the next scoring run.');
+    loadDashboard();
+  } catch (e) { toast(e.message); }
+};
+
+/* ---------- Add Buyer modal ---------- */
+const buyerModal = $('#add-buyer-modal');
+$('#add-buyer-btn').onclick = () => buyerModal.classList.add('show');
+$('#buyer-cancel-btn').onclick = () => buyerModal.classList.remove('show');
+
+$('#buyer-save-btn').onclick = async () => {
+  const name = $('#buyer-name').value.trim();
+  if (!name) { toast('Name is required.'); return; }
+  const counties = $('#buyer-counties').value.split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    await api('/buyers/manual', {
+      method: 'POST',
+      body: JSON.stringify({
+        org_id: ORG_ID,
+        name,
+        company: $('#buyer-company').value.trim() || null,
+        email: $('#buyer-email').value.trim() || null,
+        phone: $('#buyer-phone').value.trim() || null,
+        price_min: $('#buyer-price-min').value ? Number($('#buyer-price-min').value) : null,
+        price_max: $('#buyer-price-max').value ? Number($('#buyer-price-max').value) : null,
+        counties,
+        notes: $('#buyer-notes').value.trim() || null,
+      }),
+    });
+    ['#buyer-name','#buyer-company','#buyer-email','#buyer-phone',
+     '#buyer-price-min','#buyer-price-max','#buyer-counties','#buyer-notes']
+      .forEach(sel => $(sel).value = '');
+    buyerModal.classList.remove('show');
+    toast('Buyer added.');
+    loadDashboard();
+  } catch (e) { toast(e.message); }
+};
+
+[leadModal, buyerModal].forEach(modal => {
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('show'); });
+});
+
 async function loadDashboard() {
   try {
     const data = await api(`/api/dashboard?org_id=${ORG_ID}`);
@@ -734,6 +1025,7 @@ async function loadDashboard() {
     renderDirectives(data.directives);
     renderOffers(data.offers);
     renderLeads(data.leads);
+    renderBuyers(data.buyers);
   } catch (e) {
     if (e.message !== 'Not logged in') toast(e.message);
   }

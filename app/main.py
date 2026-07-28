@@ -95,6 +95,11 @@ def dashboard_data(request: Request, org_id: str):
             offers = cur.fetchall()
 
             cur.execute("""
+                SELECT * FROM buyers WHERE org_id = %s ORDER BY created_at DESC LIMIT 100
+            """, (org_id,))
+            buyers = cur.fetchall()
+
+            cur.execute("""
                 SELECT count(*) as c FROM leads WHERE org_id=%s AND status='new'
             """, (org_id,))
             new_leads = cur.fetchone()["c"]
@@ -117,6 +122,7 @@ def dashboard_data(request: Request, org_id: str):
     return {
         "leads": leads,
         "offers": offers,
+        "buyers": buyers,
         "directives": directives,
         "stats": {
             "new_leads": new_leads, "scored_leads": scored_leads,
@@ -142,6 +148,46 @@ def ingest_leads(req: IngestRequest):
     count = batchdata_service.ingest_leads(req.org_id, req.county, req.state,
                                             req.zip_codes, req.filters, req.limit)
     return {"inserted": count}
+
+
+class ManualLeadRequest(BaseModel):
+    org_id: str
+    address: str
+    city: str | None = None
+    state: str | None = None
+    zip: str | None = None
+    county: str | None = None
+    owner_name: str | None = None
+    owner_phone: str | None = None
+    owner_email: str | None = None
+    estimated_value: float | None = None
+    equity_estimate: float | None = None
+    distress_signals: list[str] = []
+    is_lis_pendens_filed: bool = False
+
+
+@app.post("/leads/manual")
+def add_manual_lead(req: ManualLeadRequest, request: Request):
+    """
+    Add a lead by hand -- for when BatchData isn't funded/available, or
+    for a property you already know about personally. Runs through the
+    exact same scoring/offer/compliance pipeline as a BatchData-sourced
+    lead; the source field just says 'manual' instead of 'batchdata'.
+    """
+    _check_session(request)
+    import json as _json
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO leads (org_id, source, address, city, state, zip, county,
+                                    owner_name, owner_phone, owner_email, estimated_value,
+                                    equity_estimate, distress_signals, is_lis_pendens_filed, status)
+                VALUES (%s,'manual',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new')
+                RETURNING *
+            """, (req.org_id, req.address, req.city, req.state, req.zip, req.county,
+                  req.owner_name, req.owner_phone, req.owner_email, req.estimated_value,
+                  req.equity_estimate, _json.dumps(req.distress_signals), req.is_lis_pendens_filed))
+            return cur.fetchone()
 
 
 @app.post("/leads/score-all")
@@ -277,6 +323,51 @@ def matched_buyers(deal_id: str, org_id: str, top_n: int = 10):
         return buyer_matching.match_buyers_for_deal(org_id, deal_id, top_n)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+class ManualBuyerRequest(BaseModel):
+    org_id: str
+    name: str
+    company: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    price_min: float | None = None
+    price_max: float | None = None
+    counties: list[str] = []
+    notes: str | None = None
+
+
+@app.post("/buyers/manual")
+def add_manual_buyer(req: ManualBuyerRequest, request: Request):
+    """Add a cash buyer by hand -- for buyers you already know personally,
+    or while BatchData's Investor Buy Box isn't funded/available."""
+    _check_session(request)
+    import json as _json
+    buy_box = {}
+    if req.price_min is not None:
+        buy_box["price_min"] = req.price_min
+    if req.price_max is not None:
+        buy_box["price_max"] = req.price_max
+    if req.counties:
+        buy_box["counties"] = req.counties
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO buyers (org_id, name, company, email, phone, buy_box, notes)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                RETURNING *
+            """, (req.org_id, req.name, req.company, req.email, req.phone,
+                  _json.dumps(buy_box), req.notes))
+            return cur.fetchone()
+
+
+@app.get("/buyers")
+def list_buyers(org_id: str):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM buyers WHERE org_id = %s ORDER BY created_at DESC", (org_id,))
+            return cur.fetchall()
 
 
 # ---------------------------------------------------------------

@@ -51,6 +51,8 @@ outbound action (offer emails, contracts) requires your explicit approval
 - Send-offer safety check: correctly refuses to send when a lead has no owner_email
 - Web dashboard: real login, real session, real data, deployed publicly
 - Both Render services (Web Service + Cron Job) deployed and functioning
+- **Manual lead entry** (`POST /leads/manual`, "+ Add lead manually" button on dashboard) — tested end-to-end, inserts with `source='manual'`, flows through the same scoring/offer pipeline as any other lead
+- **Manual buyer entry** (`POST /buyers/manual`, "+ Add buyer manually" button on dashboard) — tested end-to-end, feeds `buyer_matching.py` the same as a BatchData-prospected buyer
 
 ## 5. What's built but never tested with real data
 
@@ -58,14 +60,30 @@ outbound action (offer emails, contracts) requires your explicit approval
 - `buyer_acquisition.py` (buyer prospecting) — same, untested
 - `deal_analysis.py` (ARV/MAO calculator) — logic only, no real comps run through it
 - `contract_generation.py` (Purchase Agreement + Assignment Agreement) — never actually generated a real document
-- `buyer_matching.py` — untested, `buyers` table is empty
+- `buyer_matching.py` — logic untested against a real deal, though buyers can now be added manually to test it without BatchData
 - Most directive types (`STALE_LEAD`, `CLOSING_DEADLINE`, `WIRE_FRAUD_VERIFICATION`, etc.) — never fired because no deal has ever existed
 
 ## 6. What's not built at all
 
-- No real leads or buyers exist in the database (one manual test lead only)
+- No deal has ever moved past "offer drafted" — the under-contract → closing pipeline is unexercised, and there's no dashboard UI yet for creating a `deals` row or progressing its stage
 - `attorney_cleared_foreclosure` is still `FALSE` — correctly blocking any lis-pendens/foreclosure lead until that specific attorney conversation is confirmed
-- No deal has ever moved past "offer drafted" — the under-contract → closing pipeline is unexercised
+- No dashboard button for contract generation yet (`contract_generation.py` exists and is API-reachable, just not wired into the UI)
+
+## 4b. Manual data entry (until BatchData is funded)
+
+BatchData needs a $50 minimum wallet balance (see §3) that isn't funded
+yet, so **manual entry is the primary way real data enters this system
+right now** — not a fallback. Both are on the dashboard:
+
+- **"+ Add lead manually"** under the Leads section — property address,
+  owner contact, estimated value/equity, distress signals. Runs through
+  the identical scoring → offer → compliance pipeline as a BatchData lead.
+- **"+ Add buyer manually"** under the Buyers section — name, contact,
+  buy-box price range and counties. Feeds `buyer_matching.py` exactly
+  like a BatchData-prospected buyer would.
+
+Use these freely for any property or buyer you already know about
+personally — no cost, no BatchData dependency.
 
 ## 7. Compliance flags (orgs table)
 
@@ -87,12 +105,14 @@ wholesaling clearance.
 
 ## 9. Next steps, in priority order
 
-1. Fund BatchData ($50 minimum) when there's budget — unlocks real lead + buyer sourcing
-2. Run one real `POST /leads/ingest` call, verify field mapping matches what BatchData actually returns (per original build plan's Rule 3 — don't trust the code's assumptions blindly)
-3. Run one real `POST /buyers/prospect` call, same verification
-4. Get the foreclosure-specific attorney confirmation, flip `attorney_cleared_foreclosure`
-5. Once a real lead goes under contract, test contract generation for real
-6. Consider Twilio only if SMS urgency alerts become genuinely needed (not required for the system to work)
+1. Use manual lead/buyer entry (§4b) to keep working the pipeline while BatchData is unfunded
+2. Fund BatchData ($50 minimum) when there's budget — unlocks automated lead + buyer sourcing
+3. Run one real `POST /leads/ingest` call, verify field mapping matches what BatchData actually returns (per original build plan's Rule 3 — don't trust the code's assumptions blindly)
+4. Run one real `POST /buyers/prospect` call, same verification
+5. Get the foreclosure-specific attorney confirmation, flip `attorney_cleared_foreclosure`
+6. Build a dashboard UI for creating/progressing a `deals` row once an offer gets a real "yes"
+7. Add a contract-generation button to the dashboard
+8. Consider Twilio only if SMS urgency alerts become genuinely needed (not required for the system to work)
 
 ## 10. How to update this file
 
