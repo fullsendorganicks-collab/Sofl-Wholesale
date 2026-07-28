@@ -98,14 +98,24 @@ def skip_trace(address: str, city: str, state: str, zip_code: str) -> dict:
 
 
 def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | None = None,
-                  filters: dict | None = None, limit: int = 100) -> int:
+                  filters: dict | None = None, limit: int = 100,
+                  min_equity_percent: float = 30.0) -> dict:
     """
     Pulls properties + skip traces each one + inserts into `leads` table.
-    Returns count of leads inserted. This is the function your daily/weekly
-    cron job or manual trigger calls.
+
+    HARD QUALIFYING FILTER (not just scoring): a property is only inserted
+    if it has AT LEAST ONE real distress signal (tax delinquent, absentee
+    owner, pre-foreclosure, lis pendens) AND meets the minimum equity
+    threshold. A normal MLS-listed, owner-occupied home with no distress
+    signal gets REJECTED here, not just scored low later -- this enforces
+    "only properties that actually work for wholesaling enter the pipeline
+    at all," rather than trusting lead_scoring.py to sort it out downstream.
+
+    Returns a dict with counts: inserted vs rejected, so the filter's
+    actual effect is visible, not just trusted.
     """
     properties = search_distressed_properties(county, state, zip_codes, filters, limit)
-    inserted = 0
+    inserted, rejected = 0, 0
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -113,9 +123,6 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 address = prop.get("address", {}).get("street", "")
                 city = prop.get("address", {}).get("city", "")
                 zip_code = prop.get("address", {}).get("zip", "")
-
-                trace = skip_trace(address, city, state, zip_code)
-                owner = trace.get("owner", {})
 
                 distress_signals = []
                 if prop.get("taxDelinquent"):
@@ -135,6 +142,20 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 if is_lis_pendens:
                     distress_signals.append("lis_pendens_filed")
 
+                estimated_value = prop.get("estimatedValue") or 0
+                estimated_equity = prop.get("estimatedEquity") or 0
+                equity_percent = (estimated_equity / estimated_value * 100) if estimated_value else 0
+
+                # HARD REJECT: no distress signal at all, OR equity too thin
+                # to support a below-market cash offer. This is what keeps a
+                # normal agent-listed, owner-occupied home OUT entirely.
+                if not distress_signals or equity_percent < min_equity_percent:
+                    rejected += 1
+                    continue
+
+                trace = skip_trace(address, city, state, zip_code)
+                owner = trace.get("owner", {})
+
                 cur.execute("""
                     INSERT INTO leads (org_id, source, address, city, state, zip, county,
                                         owner_name, owner_phone, owner_email,
@@ -145,12 +166,11 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 """, (
                     org_id, "batchdata", address, city, state, zip_code, county,
                     owner.get("name"), owner.get("phone"), owner.get("email"),
-                    owner.get("mailingAddress"), prop.get("estimatedValue"),
-                    prop.get("estimatedEquity"),
+                    owner.get("mailingAddress"), estimated_value, estimated_equity,
                     __import__("json").dumps(distress_signals),
                     is_lis_pendens,
                     __import__("json").dumps(prop),
                 ))
                 inserted += 1
 
-    return inserted
+    return {"inserted": inserted, "rejected_no_distress_or_low_equity": rejected}

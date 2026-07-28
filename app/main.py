@@ -141,13 +141,18 @@ class IngestRequest(BaseModel):
     zip_codes: list[str] | None = None
     filters: dict | None = None
     limit: int = 100
+    min_equity_percent: float = 30.0
 
 
 @app.post("/leads/ingest")
-def ingest_leads(req: IngestRequest):
-    count = batchdata_service.ingest_leads(req.org_id, req.county, req.state,
-                                            req.zip_codes, req.filters, req.limit)
-    return {"inserted": count}
+def ingest_leads(req: IngestRequest, request: Request):
+    """Only properties with at least one real distress signal AND meeting
+    the minimum equity threshold get inserted -- see batchdata_service.py.
+    Response shows both inserted and rejected counts so the filter's actual
+    effect is visible, not just trusted."""
+    _check_session(request)
+    return batchdata_service.ingest_leads(req.org_id, req.county, req.state, req.zip_codes,
+                                           req.filters, req.limit, req.min_equity_percent)
 
 
 class ManualLeadRequest(BaseModel):
