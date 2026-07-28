@@ -327,6 +327,12 @@ main {
 }
 .lead-score.hi { color: var(--accent); }
 .lead-score.mid { color: var(--gold); }
+.lead-score-suffix {
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-faint);
+}
 .lead-score-label {
   display: block;
   font-family: 'Inter', sans-serif;
@@ -344,13 +350,29 @@ main {
   font-weight: 500;
   color: var(--ink);
 }
+.lead-owner {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
 .lead-meta {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 13px;
   color: var(--ink-faint);
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+.lead-contact {
+  margin-top: 6px;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--ink-faint);
+}
+.lead-details {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--ink-faint);
 }
 .tag {
   display: inline-block;
@@ -867,17 +889,56 @@ function renderLeads(leads) {
     const main = el('div', 'lead-main');
 
     const scoreBox = el('div', 'lead-score ' + scoreClass(lead.score));
-    scoreBox.innerHTML = (lead.score !== null ? Math.round(lead.score) : '—') + '<span class="lead-score-label">Score</span>';
+    if (lead.score !== null && lead.score !== undefined) {
+      const s = Math.round(lead.score);
+      const label = s >= 70 ? 'Strong' : s >= 40 ? 'Moderate' : 'Weak';
+      scoreBox.innerHTML = `${s}<span class="lead-score-suffix">/100</span><span class="lead-score-label">${label}</span>`;
+    } else {
+      scoreBox.innerHTML = '—<span class="lead-score-label">Not scored</span>';
+    }
     main.appendChild(scoreBox);
 
     const body = el('div', 'lead-body');
     body.appendChild(el('div', 'lead-address', lead.address));
+    if (lead.owner_name) {
+      body.appendChild(el('div', 'lead-owner', 'Owner: ' + lead.owner_name));
+    }
     const meta = el('div', 'lead-meta');
     meta.appendChild(el('span', 'tag status-' + lead.status, lead.status));
     if (lead.is_lis_pendens_filed) meta.appendChild(el('span', 'tag lis-pendens', 'lis pendens'));
-    if (lead.estimated_value) meta.appendChild(el('span', 'mono', fmtMoney(lead.estimated_value) + ' est.'));
+    if (lead.distress_signals && lead.distress_signals.length) {
+      meta.appendChild(el('span', 'tag', lead.distress_signals.join(', ').replace(/_/g, ' ')));
+    }
+    if (lead.estimated_value) meta.appendChild(el('span', 'mono', fmtMoney(lead.estimated_value) + ' est. value'));
     if (lead.equity_estimate) meta.appendChild(el('span', 'mono', fmtMoney(lead.equity_estimate) + ' equity'));
     body.appendChild(meta);
+
+    if (lead.owner_mailing_address || lead.owner_phone || lead.owner_email) {
+      const contact = el('div', 'lead-contact');
+      const parts = [];
+      if (lead.owner_mailing_address) parts.push('Mail: ' + lead.owner_mailing_address);
+      if (lead.owner_phone) parts.push('Phone: ' + lead.owner_phone);
+      if (lead.owner_email) parts.push('Email: ' + lead.owner_email);
+      contact.textContent = parts.join('   ·   ');
+      body.appendChild(contact);
+    }
+
+    const rp = lead.raw_payload;
+    if (rp) {
+      const details = [];
+      const bldg = rp.building || {};
+      if (bldg.bedroomCount) details.push(`${bldg.bedroomCount} bed / ${bldg.bathroomCount || '?'} bath`);
+      if (bldg.livingAreaSquareFeet) details.push(`${bldg.livingAreaSquareFeet.toLocaleString()} sqft`);
+      if (bldg.yearBuilt) details.push(`built ${bldg.yearBuilt}`);
+      const ql = rp.quickLists || {};
+      if (ql.ownerOccupied === false) details.push('vacant/non-owner-occupied');
+      const listing = rp.listing || {};
+      if (listing.statusCategory === 'Failed') details.push('listing expired/failed to sell');
+      if (details.length) {
+        body.appendChild(el('div', 'lead-details', details.join('  •  ')));
+      }
+    }
+
     main.appendChild(body);
     card.appendChild(main);
 
