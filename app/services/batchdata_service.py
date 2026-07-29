@@ -30,6 +30,11 @@ from app.db import get_conn
 BATCHDATA_API_KEY = os.environ.get("BATCHDATA_API_KEY")
 BATCHDATA_BASE_URL = "https://api.batchdata.com/api/v1"
 
+# absentee_owner alone is a weaker distress signal than tax_delinquent,
+# pre_foreclosure, or lis_pendens_filed -- require higher equity to qualify
+# on that signal alone. See the real-lead reasoning in ingest_leads() below.
+WEAK_SIGNAL_MIN_EQUITY_PERCENT = 50.0
+
 
 def _require_api_key() -> None:
     if not BATCHDATA_API_KEY:
@@ -146,7 +151,7 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
     filter's actual effect AND the real cost are both visible, not trusted.
     """
     properties = search_distressed_properties(county, state, zip_codes, filters, limit)
-    inserted, rejected, capped = 0, 0, 0
+    inserted, rejected, capped, rejected_weak_signal = 0, 0, 0, 0
     skip_traces_used = 0
 
     with get_conn() as conn:
@@ -185,11 +190,32 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
                 if equity_percent is None:
                     equity_percent = (estimated_equity / estimated_value * 100) if estimated_value else 0
 
-                # HARD REJECT: no distress signal at all, OR equity too thin
-                # to support a below-market cash offer. This is what keeps a
-                # normal agent-listed, owner-occupied home OUT entirely.
-                if not distress_signals or equity_percent < min_equity_percent:
+                # HARD REJECT: no distress signal at all.
+                if not distress_signals:
                     rejected += 1
+                    continue
+
+                # STRONG vs WEAK signal distinction (added 2026-07-28, per
+                # real lead review): a real BatchData lead scored 32/100 by
+                # Claude on absentee_owner alone -- "high property value and
+                # lack of stronger distress signals... likely a passive
+                # investor with little urgency to accept a steep discount."
+                # tax_delinquent, pre_foreclosure, and lis_pendens are strong
+                # signals of real seller distress/urgency and qualify at the
+                # normal min_equity_percent threshold. absentee_owner alone
+                # is weaker -- an absentee landlord isn't necessarily
+                # motivated to sell below market -- so if that's the ONLY
+                # signal present, require WEAK_SIGNAL_MIN_EQUITY_PERCENT
+                # (50%) instead, not just min_equity_percent (default 30%).
+                strong_signals = {"tax_delinquent", "pre_foreclosure", "lis_pendens_filed"}
+                has_strong_signal = any(s in strong_signals for s in distress_signals)
+                required_equity = min_equity_percent if has_strong_signal else WEAK_SIGNAL_MIN_EQUITY_PERCENT
+
+                if equity_percent < required_equity:
+                    if has_strong_signal:
+                        rejected += 1
+                    else:
+                        rejected_weak_signal += 1
                     continue
 
                 # COST CAP: this property qualified, but skip-tracing it is a
@@ -264,6 +290,7 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
     return {
         "inserted": inserted,
         "rejected_no_distress_or_low_equity": rejected,
+        "rejected_weak_signal_insufficient_equity": rejected_weak_signal,
         "capped_at_max_skip_traces": capped,
         "skip_traces_used": skip_traces_used,
         "estimated_cost_usd": round(skip_traces_used * 0.07, 2),

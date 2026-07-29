@@ -4,22 +4,27 @@ Living reference doc. Update this whenever something changes (new account,
 new key, new fix, new decision) — this is the single source of truth for
 "what is this system and how do I operate it," not the chat history.
 
-Last updated: 2026-07-28 (evening — BatchData funded and tested for real)
+Last updated: 2026-07-28 (late — cost incident + qualifying filter tightened)
 
-**Current status: core loop proven working end-to-end with REAL data.**
-BatchData is funded ($50 paid) and `/leads/ingest` successfully pulled,
-qualified, skip-traced, and inserted a real property lead (2632 NE 29th
-Ct, Fort Lauderdale — real owner name + mailing address, real equity/value
-numbers), which then scored correctly via Claude. The field-name mapping
-that was previously unverified (§6) is now fixed and confirmed correct
-for search results and owner name/mailing address.
+**Current status: core loop proven working, one real cost incident happened
+and got fixed.** BatchData is funded and `/leads/ingest` successfully pulled,
+qualified, skip-traced, and inserted a real property lead (2632 NE 29th Ct,
+Fort Lauderdale). Claude correctly scored it low (32/100) and explained why
+(weak single distress signal, high-value property, no real seller urgency)
+-- the filter and scoring are doing real, honest analysis, not rubber-stamping.
 
-**One real gap remains**: owner phone/email extraction from skip-trace is
-still unconfirmed — the endpoint returns *something* without crashing,
-but not in a shape the code recognizes as phone/email yet (see §6). This
-means offers can be drafted and mailed (real mailing address works) but
-not yet auto-emailed via Gmail on BatchData-sourced leads specifically,
-until that's resolved.
+**⚠️ Real incident, read this**: during testing, the BatchData wallet dropped
+from ~$50 to ~$40.90 (~$9+ spent) across a handful of ingest calls, far more
+than the ~$0.07 expected from the one successful lead. Root cause: `ingest_leads()`
+had NO cap on how many properties could get skip-traced per call, and at
+least one failed attempt (a `KeyError` crash) may have still spent money on
+skip-trace calls before failing to insert anything. **Fixed** with a hard
+`max_skip_traces` cap (default 5, ~$0.35 max/call) and a `dry_run` mode --
+see §3 and §6. The exact accounting of the $9 gap was never fully
+reconstructed; the fix prevents recurrence but doesn't explain the past spend.
+
+**Rule going forward**: always `dry_run: true` a new county/filter
+combination before a real (paid) `/leads/ingest` call. Never assume cost.
 
 ---
 
@@ -55,7 +60,7 @@ outbound action (offer emails, contracts) requires your explicit approval
 | Render | ✅ Live | Two services under "Soflo Wholesale" project: Web Service + Cron Job, both need the same env vars |
 | GitHub | ✅ Live | Private repo, `.env` and `client_secret.json` correctly gitignored |
 | Twilio (SMS) | ❌ Not set up | Deliberately skipped — costs money, email brief covers everything. `sms_service.py` is fully optional, app runs fine without it |
-| BatchData | ✅ Live, funded | $50 paid 2026-07-28. Property search confirmed FREE (Property Search Sessions = $0.00/request per their pricing page). Skip trace costs ~$0.07/property, only runs on properties that pass the qualifying filter. One real test run: 3 properties searched, 2 rejected by the filter (correctly), 1 inserted + skip-traced (~$0.07 spent total so far) |
+| BatchData | ✅ Live, funded | $50 paid 2026-07-28, balance ~$40.90 after a cost incident (see status note above and §9). Property search confirmed FREE. Skip trace ~$0.07/property. **`/leads/ingest` now hard-caps spend per call via `max_skip_traces` (default 5, ~$0.35 max) and supports `dry_run: true` to preview with zero cost — always dry-run a new county/filter first.** |
 
 ## 4. What's proven working (real end-to-end tests done)
 
@@ -68,8 +73,9 @@ outbound action (offer emails, contracts) requires your explicit approval
 - Both Render services (Web Service + Cron Job) deployed and functioning
 - **Manual lead entry** (`POST /leads/manual`, "+ Add lead manually" button on dashboard) — tested end-to-end, inserts with `source='manual'`, flows through the same scoring/offer pipeline as any other lead
 - **Manual buyer entry** (`POST /buyers/manual`, "+ Add buyer manually" button on dashboard) — tested end-to-end, feeds `buyer_matching.py` the same as a BatchData-prospected buyer
-- **BatchData lead ingestion, full pipeline** (`POST /leads/ingest`) — tested end-to-end with real funded credits, 2026-07-28. Real property (2632 NE 29th Ct, Fort Lauderdale) searched → qualifying filter correctly rejected 2/3 properties (no distress signal or insufficient equity) → 1 passed → skip-traced → inserted with correct owner name + mailing address → scored by Claude. First fully-automated real lead in the system.
-- **Qualifying filter** — proven to actually reject: 2 of 3 real search results rejected for lacking a real distress signal or falling below the 30% equity threshold, not just scored low
+- **BatchData lead ingestion, full pipeline** (`POST /leads/ingest`) — tested end-to-end with real funded credits, 2026-07-28. Real property (2632 NE 29th Ct, Fort Lauderdale) searched → qualifying filter correctly rejected 2/3 properties (no distress signal or insufficient equity) → 1 passed → skip-traced → inserted with correct owner name + mailing address → scored by Claude (32/100, correctly identified as weak — see below). First fully-automated real lead in the system.
+- **Two-tier qualifying filter** (tightened 2026-07-28 after reviewing that 32/100 lead) — `tax_delinquent`, `pre_foreclosure`, and `lis_pendens_filed` qualify at 30% equity (unchanged); `absentee_owner` ALONE now requires 50% equity (`WEAK_SIGNAL_MIN_EQUITY_PERCENT` in `batchdata_service.py`), since an absentee landlord isn't necessarily a motivated seller. Real dry-run test on 20 properties: 11 would qualify, 6 rejected (no signal / strong-signal-but-low-equity), 3 rejected specifically for weak-signal-insufficient-equity (`rejected_weak_signal_insufficient_equity` in the response) — confirms the new tier is actually distinguishing weak vs. strong signals, not just theory
+- **Spending cap + dry-run mode** — `max_skip_traces` caps real spend per `/leads/ingest` call (default 5 ≈ $0.35 max); `dry_run: true` runs search + the full qualifying filter with zero cost. Response now always includes `skip_traces_used` and `estimated_cost_usd` so spend is visible, not assumed
 
 ## 5. Manual data entry (until BatchData is funded)
 
@@ -133,16 +139,17 @@ wholesaling clearance.
 - **Render deploys can silently serve stale files** — happened once with the dashboard HTML (Render said "Deploy live" but served an old version). If a deploy looks live but the change isn't showing, use Manual Deploy → "Clear build cache & deploy" rather than a normal redeploy.
 - **BATCHDATA_API_KEY must be set on the Web Service specifically** — it was missing there once even though it was in `.env` locally, causing a `RuntimeError` on every ingest call. Check Render's Environment tab on the Web Service (not just the Cron Job) if ingestion ever fails with a "not set" error.
 - **Owner phone/email from skip-trace are not yet reliable** — see §6. Mailing address and owner name work; phone/email are best-effort until the real response shape is confirmed.
+- **Real cost incident, 2026-07-28**: ~$9 spent beyond expected during testing, root cause was an uncapped skip-trace loop (fixed — see status note at top and §3). Always `dry_run: true` before a real ingest call on new criteria. Never assume a call's cost without checking `estimated_cost_usd` in its response first.
 
 ## 10. Next steps, in priority order
 
-1. Run a larger real `/leads/ingest` batch (10-50 properties, not just 3) to confirm the pipeline holds up at volume, not just on one lucky match
-2. Resolve skip-trace phone/email extraction — check Render logs for the `[batchdata_service] skip_trace: unrecognized results shape, keys=[...]` line on the next real call to see the actual structure
-3. Run one real `POST /buyers/prospect` call, verify field mapping the same way search/skip-trace needed (per original build plan's Rule 3 — don't trust the code's assumptions blindly)
-4. Get the foreclosure-specific attorney confirmation, flip `attorney_cleared_foreclosure`
-5. Build a dashboard UI for creating/progressing a `deals` row once an offer gets a real "yes"
-6. Add a contract-generation button to the dashboard
-7. Surface more of BatchData's rich data (tax history, listing history) on the lead card — currently only in `raw_payload`
+1. **In progress**: post-scoring quality gate in `lead_scoring.py` — leads scoring below 50 should get `status='low_priority'` instead of `'scored'`, hidden from the default dashboard view but not deleted (deferred to a later session, per plan agreed 2026-07-28)
+2. Run a larger real `/leads/ingest` dry-run batch (20-50 properties) across more counties to see how the tightened filter performs before spending on skip-trace at scale
+3. Resolve skip-trace phone/email extraction — check Render logs for the `[batchdata_service] skip_trace: unrecognized results shape, keys=[...]` line on the next real call to see the actual structure
+4. Run one real `POST /buyers/prospect` call with `dry_run` first if a similar param gets added there — verify field mapping the same way search/skip-trace needed (per original build plan's Rule 3 — don't trust the code's assumptions blindly)
+5. Get the foreclosure-specific attorney confirmation, flip `attorney_cleared_foreclosure`
+6. Build a dashboard UI for creating/progressing a `deals` row once an offer gets a real "yes"
+7. Add a contract-generation button to the dashboard
 8. Consider Twilio only if SMS urgency alerts become genuinely needed (not required for the system to work)
 
 ## 11. How to update this file
