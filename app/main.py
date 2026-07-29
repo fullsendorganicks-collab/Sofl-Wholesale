@@ -134,13 +134,34 @@ def dashboard_data(request: Request, org_id: str):
 # ---------------------------------------------------------------
 # LEADS
 # ---------------------------------------------------------------
+class CountPreviewRequest(BaseModel):
+    county: str
+    state: str
+    zip_codes: list[str] | None = None
+    quicklists: list[str] | None = None
+
+
+@app.post("/leads/preview-count")
+def preview_count(req: CountPreviewRequest, request: Request):
+    """Near-minimum-cost way to see how many properties match a
+    county/quicklists combination BEFORE running a real /leads/ingest
+    call. CONFIRMED via BatchData support (2026-07-29): a take=0 request
+    returns aggregate count only and is billed as ONE property record at
+    the dataset rate -- NOT free, but the cheapest possible real check.
+    Always call this before a new county/filter combination you haven't
+    tried yet."""
+    _check_session(request)
+    return batchdata_service.count_matching_properties(req.county, req.state, req.zip_codes,
+                                                         req.quicklists)
+
+
 class IngestRequest(BaseModel):
     org_id: str
     county: str
     state: str
     zip_codes: list[str] | None = None
-    filters: dict | None = None
-    limit: int = 100
+    quicklists: list[str] | None = None  # e.g. ["tax_delinquent","pre_foreclosure"]; see QUICKLIST_TAG_MAP
+    limit: int = 10  # hard-capped at 10 inside batchdata_service.py regardless of value sent here
     min_equity_percent: float = 30.0
     max_skip_traces: int = 5
     dry_run: bool = False
@@ -148,16 +169,30 @@ class IngestRequest(BaseModel):
 
 @app.post("/leads/ingest")
 def ingest_leads(req: IngestRequest, request: Request):
-    """Only properties with at least one real distress signal AND meeting
+    """⚠️ BOTH property search AND skip trace are PAID BatchData calls --
+    search is billed per record returned (~$0.10-0.64/record observed),
+    NOT free as earlier documentation incorrectly claimed. `limit` is
+    hard-capped at 10 records regardless of what's sent. dry_run=true
+    still calls search (still costs money) and only skips skip_trace +
+    the database insert -- it is NOT a zero-cost preview.
+
+    `quicklists` narrows the search SERVER-SIDE (confirmed correct filter
+    mechanism via BatchData support, 2026-07-29 -- see QUICKLIST_TAG_MAP
+    in batchdata_service.py). Defaults to tax_delinquent/pre_foreclosure/
+    notice_of_default if not specified. This is what actually reduces cost
+    per qualifying lead -- without it, most billed records don't qualify.
+
+    Only properties with at least one real distress signal AND meeting
     the minimum equity threshold get inserted -- see batchdata_service.py.
     Response shows inserted/rejected/capped counts and estimated_cost_usd
-    so both the filter's effect AND real spend are visible, not trusted.
-    max_skip_traces caps real BatchData spend per call (default 5, ~$0.35
+    (skip-trace cost only -- search cost is NOT included, it varies per
+    record; check BatchData's own consumption-report for true total spend).
+    max_skip_traces caps skip-trace spend per call (default 5, ~$0.35
     max). Set dry_run=true to see what WOULD qualify without spending
     anything -- recommended before any real run with a new county/filter."""
     _check_session(request)
     return batchdata_service.ingest_leads(req.org_id, req.county, req.state, req.zip_codes,
-                                           req.filters, req.limit, req.min_equity_percent,
+                                           req.quicklists, req.limit, req.min_equity_percent,
                                            req.max_skip_traces, req.dry_run)
 
 

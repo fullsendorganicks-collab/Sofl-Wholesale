@@ -35,6 +35,22 @@ BATCHDATA_BASE_URL = "https://api.batchdata.com/api/v1"
 # on that signal alone. See the real-lead reasoning in ingest_leads() below.
 WEAK_SIGNAL_MIN_EQUITY_PERCENT = 50.0
 
+# ⚠️ COST CORRECTION, 2026-07-28: property/search is NOT free. Earlier
+# comments/docs in this file incorrectly stated it was, based on a
+# misreading of BatchData's pricing page. Confirmed via BatchData support
+# and a real itemized consumption-report pull: search is billed PER RECORD
+# RETURNED, roughly $0.096/property (a single call with take=20 cost
+# $12.80 -- $0.64/property was also observed on a smaller call, so the
+# per-record rate may vary; treat it as "not free, roughly $0.10/record,
+# verify before assuming otherwise"). A "dry_run" that only skips
+# skip_trace() is NOT actually free if it still calls search with a large
+# `limit` -- this is exactly what caused a real, unintended ~$12.80 charge.
+#
+# Hard ceiling: no search call in this module may request more than this
+# many records, regardless of what limit/take value is passed in from
+# main.py or anywhere else. This cannot be overridden by a caller mistake.
+MAX_SEARCH_RECORDS_PER_CALL = 10
+
 
 def _require_api_key() -> None:
     if not BATCHDATA_API_KEY:
@@ -45,30 +61,128 @@ def _require_api_key() -> None:
         )
 
 
-def search_distressed_properties(county: str, state: str, zip_codes: list[str] | None = None,
-                                  filters: dict | None = None, limit: int = 100) -> list[dict]:
+# CONFIRMED via BatchData support, 2026-07-29: the real, supported way to
+# filter /property/search server-side is a `quickLists` array of string
+# tags inside searchCriteria, combined with AND logic -- NOT flat top-level
+# booleans like {"absenteeOwner": true}, which support confirmed is simply
+# not a supported filter and silently does nothing (explains why the
+# earlier version of this code saw absenteeOwner:true requested but got
+# back properties with quickLists.absenteeOwner=false in the response).
+#
+# Valid quickLists filter tags (per support, may not be exhaustive):
+#   "absentee-owner", "tax-default", "preforeclosure", "notice-of-default",
+#   "high-equity" (>20% equity -- there is NO custom equity range filter,
+#   e.g. no way to request "30%+" specifically; high-equity is the only
+#   equity-related tag and it's a fixed >20% threshold)
+QUICKLIST_TAG_MAP = {
+    "absentee_owner": "absentee-owner",
+    "tax_delinquent": "tax-default",
+    "pre_foreclosure": "preforeclosure",
+    "notice_of_default": "notice-of-default",
+    "high_equity": "high-equity",
+}
+
+
+def count_matching_properties(county: str, state: str, zip_codes: list[str] | None = None,
+                               quicklists: list[str] | None = None) -> dict:
     """
-    Pulls a list of properties for a county/state (optionally narrowed by
-    zip). The `filters` dict is passed through as extra searchCriteria
-    keys, but treat it as a hint, not a guarantee: a live test on
-    2026-07-28 sent {"absenteeOwner": True} and got back properties where
-    quickLists.absenteeOwner was actually False for 2 of 3 results -- this
-    request-side filter does NOT reliably narrow results as written
-    (either the key/location is wrong per BatchData's real schema, or it's
-    advisory-only on their end). Because of that, ingest_leads() below
-    does NOT trust this filter -- it re-checks every returned property's
-    real quickLists/valuation fields itself before inserting anything.
-    Treat `filters` here as a way to *reduce* the response size / API cost
-    for a rough pass, never as the actual qualifying logic.
+    CONFIRMED via BatchData support, 2026-07-29: sending "take": 0 returns
+    aggregate count/summary data only, and is billed as ONE property record
+    at the dataset rate (not per-matching-record) -- this is the real,
+    near-minimum-cost way to see how many properties match a filter BEFORE
+    committing to a real search call. Use this before every real
+    ingest_leads() call on a new county/quicklists combination, not the
+    misleadingly-named old "dry_run" (which still pulls up to 10 real,
+    billed records -- see ingest_leads()'s dry_run docs).
+
+    Also confirmed: price per record does NOT vary by which quickLists
+    filter is used -- billing is by dataset/token provisioning, not by
+    which filter tags are applied. Filtering narrows what's returned (so
+    you're not paying for irrelevant records), it does not change the
+    per-record rate itself.
+
+    ⚠️ UNVERIFIED: the exact field name BatchData uses for the count in a
+    take=0 response has NOT been confirmed against a real call yet (this
+    function was written from the support chat's description, not an
+    observed response). Tries a few plausible field names
+    (results.meta.total, results.totalCount, results.total); if NONE of
+    them match, returns count=None and includes the full raw response so
+    the real field name is visible instead of silently returning a wrong
+    0. Check the raw_response the first time this runs for real.
     """
     _require_api_key()
-    filters = filters or {}
+    tags = [QUICKLIST_TAG_MAP[q] for q in (quicklists or []) if q in QUICKLIST_TAG_MAP]
+    search_criteria = {
+        "query": f"{county} County, {state}",
+        "zipCodes": zip_codes or [],
+    }
+    if tags:
+        search_criteria["quickLists"] = tags
+    payload = {"searchCriteria": search_criteria, "options": {"take": 0}}
+    headers = {"Authorization": f"Bearer {BATCHDATA_API_KEY}", "Content-Type": "application/json"}
+
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(f"{BATCHDATA_BASE_URL}/property/search", json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+
+    results = data.get("results", {}) or {}
+    count = None
+    for path in [("meta", "total"), ("totalCount",), ("total",)]:
+        node = results
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+            if node is None:
+                break
+        if isinstance(node, int):
+            count = node
+            break
+
+    if count is None:
+        print(f"[batchdata_service] count_matching_properties: could not find count field, "
+              f"raw response: {data}")
+
+    return {"count": count, "raw_response": data}
+
+
+def search_distressed_properties(county: str, state: str, zip_codes: list[str] | None = None,
+                                  quicklists: list[str] | None = None, limit: int = 10) -> list[dict]:
+    """
+    Pulls a list of properties for a county/state (optionally narrowed by
+    zip). `quicklists` should be a list of our internal signal names (see
+    QUICKLIST_TAG_MAP keys, e.g. ["absentee_owner", "tax_delinquent"]) --
+    translated to BatchData's real quickLists tags before the request.
+    This is the CONFIRMED correct server-side filter mechanism (see
+    QUICKLIST_TAG_MAP comment above) -- using it actually narrows what
+    gets returned and billed, unlike the old top-level-boolean approach
+    which silently filtered nothing.
+
+    Even with server-side filtering, ingest_leads() below still re-checks
+    every returned property's real quickLists/valuation fields itself
+    before inserting anything -- server-side filtering reduces cost, it
+    does not replace the client-side qualifying logic.
+
+    ⚠️ THIS IS A PAID CALL, billed per record returned (~$0.096-0.64/record
+    observed for real, not free -- see MAX_SEARCH_RECORDS_PER_CALL comment
+    above). Confirmed via BatchData support: price per record does NOT vary
+    by which quickLists filter is applied -- it's a flat dataset rate.
+    `limit` is hard-capped at MAX_SEARCH_RECORDS_PER_CALL (10) regardless
+    of what's requested, so a caller mistake (or a default argument like
+    the old `limit: int = 100`) can't cause a large, unexpected charge
+    again. **Call count_matching_properties() first** to see how many
+    results would match, for near-minimum cost, before calling this.
+    """
+    _require_api_key()
+    limit = min(limit, MAX_SEARCH_RECORDS_PER_CALL)
+    tags = [QUICKLIST_TAG_MAP[q] for q in (quicklists or []) if q in QUICKLIST_TAG_MAP]
+    search_criteria = {
+        "query": f"{county} County, {state}",
+        "zipCodes": zip_codes or [],
+    }
+    if tags:
+        search_criteria["quickLists"] = tags
     payload = {
-        "searchCriteria": {
-            "query": f"{county} County, {state}",
-            "zipCodes": zip_codes or [],
-            **filters,
-        },
+        "searchCriteria": search_criteria,
         "options": {"take": limit},
     }
     headers = {"Authorization": f"Bearer {BATCHDATA_API_KEY}", "Content-Type": "application/json"}
@@ -118,11 +232,23 @@ def skip_trace(address: str, city: str, state: str, zip_code: str) -> dict:
 
 
 def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | None = None,
-                  filters: dict | None = None, limit: int = 100,
+                  quicklists: list[str] | None = None, limit: int = 10,
                   min_equity_percent: float = 30.0, max_skip_traces: int = 5,
                   dry_run: bool = False) -> dict:
     """
     Pulls properties + skip traces each one + inserts into `leads` table.
+
+    `quicklists`: which distress signals to filter for SERVER-SIDE (see
+    QUICKLIST_TAG_MAP for valid values, e.g. ["absentee_owner",
+    "tax_delinquent"]). Defaults to requiring at least one of
+    tax_delinquent/pre_foreclosure/notice_of_default if not specified --
+    NOT absentee_owner alone, since that's the weak signal that needs the
+    higher equity bar anyway (see WEAK_SIGNAL_MIN_EQUITY_PERCENT below).
+    This is the fix for the real cost problem from 2026-07-28: without a
+    real server-side filter, most returned (and BILLED) records didn't
+    qualify at all -- confirmed via BatchData support that the earlier
+    top-level-boolean filter attempt was not a supported filter and did
+    nothing, so every search call was paying for a lot of noise.
 
     HARD QUALIFYING FILTER (not just scoring): a property is only inserted
     if it has AT LEAST ONE real distress signal (tax delinquent, absentee
@@ -131,26 +257,47 @@ def ingest_leads(org_id: str, county: str, state: str, zip_codes: list[str] | No
     signal gets REJECTED here, not just scored low later -- this enforces
     "only properties that actually work for wholesaling enter the pipeline
     at all," rather than trusting lead_scoring.py to sort it out downstream.
+    This client-side check still runs even with server-side filtering,
+    since quickLists tags narrow the search but the qualifying logic here
+    (including the strong/weak signal equity split) is more specific than
+    what BatchData's filter alone guarantees.
 
-    COST SAFETY RAIL: skip_trace() is the only paid call in this function
-    (~$0.07/property per BatchData's pricing). There was previously NO cap
-    on how many properties could get skip-traced in one call -- a single
-    ingest_leads() call with a large `limit` and a permissive filter could
-    silently rack up real charges with no ceiling, which is exactly what
-    happened during testing on 2026-07-28 (spent far more than expected
-    across a handful of calls). max_skip_traces caps real spend per call
-    regardless of how many properties pass the filter -- once hit, further
-    qualifying properties are still counted as inserted=0 and reported
-    separately as capped, not silently skip-traced anyway.
+    ⚠️ BOTH search AND skip_trace ARE PAID CALLS. An earlier version of this
+    module incorrectly claimed property search was free ("Property Search
+    Sessions: $0.00" on BatchData's pricing page, misread/mislabeled) --
+    this caused a real, unintended ~$12.80 charge on a single "dry run"
+    call on 2026-07-28 that only skipped skip_trace(), not search. Confirmed
+    via BatchData support + a real itemized consumption-report pull: search
+    is billed per record returned, roughly $0.10-0.64/record observed.
+    `limit` is hard-capped at MAX_SEARCH_RECORDS_PER_CALL (10) inside
+    search_distressed_properties() regardless of what's passed here.
 
-    dry_run=True runs search + the qualifying filter but NEVER calls
-    skip_trace() or inserts anything -- use this to see how many
-    properties WOULD qualify and get charged before spending anything.
+    max_skip_traces caps how many properties get skip-traced (~$0.07/property,
+    confirmed accurate) per call -- once hit, further qualifying properties
+    are reported as "capped", not silently skip-traced anyway.
 
-    Returns a dict with counts: inserted vs rejected vs capped, so the
-    filter's actual effect AND the real cost are both visible, not trusted.
+    dry_run=True skips skip_trace() and the database insert, but STILL
+    calls search (which still costs money, capped at 10 records) -- this
+    flag answers "what would qualify," it is NOT a zero-cost preview.
+    There is currently no way to preview qualifying leads at truly zero
+    cost; the closest is calling with a small `limit`.
+
+    Returns a dict with counts: inserted vs rejected vs capped, plus
+    skip_traces_used and its estimated cost -- search cost is NOT included
+    in estimated_cost_usd because it varies per record and isn't reliably
+    predictable; check BatchData's wallet/consumption-report endpoint for
+    actual total spend, don't trust this function's estimate as complete.
     """
-    properties = search_distressed_properties(county, state, zip_codes, filters, limit)
+    if quicklists is None:
+        # Default: only search for strong-signal properties server-side.
+        # absentee_owner alone is deliberately excluded from the default --
+        # it's the weak signal that needs a higher equity bar (see below),
+        # so a broad absentee-owner search tends to return a lot of records
+        # that get rejected anyway. Pass quicklists=["absentee_owner"]
+        # explicitly if that's specifically what's wanted.
+        quicklists = ["tax_delinquent", "pre_foreclosure", "notice_of_default"]
+
+    properties = search_distressed_properties(county, state, zip_codes, quicklists, limit)
     inserted, rejected, capped, rejected_weak_signal = 0, 0, 0, 0
     skip_traces_used = 0
 
