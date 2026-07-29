@@ -127,16 +127,28 @@ def count_matching_properties(county: str, state: str, zip_codes: list[str] | No
         data = resp.json()
 
     results = data.get("results", {}) or {}
+    # CONFIRMED via a real take=0 response, 2026-07-29:
+    # results.meta.results.resultsFound is the real count field (the
+    # earlier guesses -- meta.total, totalCount, total -- were all wrong).
+    # Example real response for Palm Beach County, no quicklists filter:
+    #   results.meta.results = {"resultCount": 0, "resultsFound": 731805}
+    # ("resultCount" is how many were RETURNED, always 0 for take=0;
+    # "resultsFound" is the real total match count.)
     count = None
-    for path in [("meta", "total"), ("totalCount",), ("total",)]:
-        node = results
-        for key in path:
-            node = node.get(key) if isinstance(node, dict) else None
-            if node is None:
+    node = (results.get("meta") or {}).get("results") or {}
+    if isinstance(node.get("resultsFound"), int):
+        count = node["resultsFound"]
+    else:
+        # Fallback guesses kept in case the field name varies by query type.
+        for path in [("meta", "total"), ("totalCount",), ("total",)]:
+            n = results
+            for key in path:
+                n = n.get(key) if isinstance(n, dict) else None
+                if n is None:
+                    break
+            if isinstance(n, int):
+                count = n
                 break
-        if isinstance(node, int):
-            count = node
-            break
 
     if count is None:
         print(f"[batchdata_service] count_matching_properties: could not find count field, "
