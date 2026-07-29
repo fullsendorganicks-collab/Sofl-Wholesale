@@ -517,6 +517,29 @@ main {
 .buyer-meta { font-size: 12.5px; color: var(--ink-faint); margin-top: 3px; }
 .buyer-contact { font-size: 13px; color: var(--ink-soft); text-align: right; }
 
+/* ---------- Find New Leads panel ---------- */
+.find-leads-panel {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.find-leads-row { display: flex; gap: 8px; align-items: center; }
+.find-leads-input, .find-leads-select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  padding: 8px 10px;
+}
+.find-leads-input { flex: 1; }
+.find-leads-result { margin-top: 10px; font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+.find-leads-result .cost-warning { color: var(--gold); font-weight: 600; }
+.find-leads-result .btn { margin-top: 8px; }
+
 /* ---------- Add-record buttons + modal ---------- */
 .add-btn-row { display: flex; gap: 10px; margin-bottom: 16px; }
 .btn-add {
@@ -614,6 +637,18 @@ main {
         <span class="section-title">Leads</span>
         <span class="section-count" id="leads-count"></span>
       </div>
+
+      <div class="find-leads-panel">
+        <div class="find-leads-row">
+          <input type="text" id="find-county" class="find-leads-input" placeholder="County (e.g. Broward)">
+          <select id="find-state" class="find-leads-select">
+            <option value="FL">FL</option>
+          </select>
+          <button class="btn btn-secondary" id="find-leads-btn">Check How Many Leads Match</button>
+        </div>
+        <div id="find-leads-result" class="find-leads-result"></div>
+      </div>
+
       <div class="add-btn-row">
         <button class="btn btn-add" id="add-lead-btn">+ Add lead manually</button>
       </div>
@@ -1084,6 +1119,50 @@ function renderBuyers(buyers) {
     list.appendChild(card);
   }
 }
+
+/* ---------- Find New Leads (preview-count first, real pull only on explicit confirm) ---------- */
+$('#find-leads-btn').onclick = async () => {
+  const county = $('#find-county').value.trim();
+  const state = $('#find-state').value;
+  const resultBox = $('#find-leads-result');
+  if (!county) { resultBox.textContent = 'Enter a county first.'; return; }
+
+  resultBox.textContent = 'Checking match count (small real cost, ~1 record’s worth)...';
+  try {
+    const res = await api('/leads/preview-count', {
+      method: 'POST',
+      body: JSON.stringify({ county, state }),
+    });
+    if (res.count === null || res.count === undefined) {
+      resultBox.innerHTML = `<span class="cost-warning">Could not read a count from BatchData's response — check server logs. No leads were pulled, nothing else was spent.</span>`;
+      return;
+    }
+    const worstCase = Math.min(res.count, 10);
+    resultBox.innerHTML = `
+      <div>${res.count} propert${res.count === 1 ? 'y matches' : 'ies match'} in ${county} County, ${state}.</div>
+      <div class="cost-warning">Pulling real leads costs money: up to ${worstCase} records searched
+        (~$0.10–$0.64 each) plus up to 5 skip-traces (~$0.07 each) for real leads found.
+        Nothing has been spent yet beyond this check.</div>
+      <button class="btn btn-primary" id="confirm-pull-btn">Pull Up To ${worstCase} Leads Now</button>
+    `;
+    $('#confirm-pull-btn').onclick = async () => {
+      if (!confirm(`This will spend real money (search + skip-trace fees). Continue pulling from ${county} County, ${state}?`)) return;
+      resultBox.textContent = 'Pulling leads… this costs real money, please wait.';
+      try {
+        const ingestRes = await api('/leads/ingest', {
+          method: 'POST',
+          body: JSON.stringify({ org_id: ORG_ID, county, state }),
+        });
+        resultBox.innerHTML = `<div>Done. Inserted: ${ingestRes.inserted}, rejected: ${ingestRes.rejected_no_distress_or_low_equity + ingestRes.rejected_weak_signal_insufficient_equity}, skip-traces used: ${ingestRes.skip_traces_used} (~$${ingestRes.estimated_cost_usd}).</div>`;
+        loadDashboard();
+      } catch (e) {
+        resultBox.innerHTML = `<span class="cost-warning">Error: ${e.message}</span>`;
+      }
+    };
+  } catch (e) {
+    resultBox.innerHTML = `<span class="cost-warning">Error: ${e.message}</span>`;
+  }
+};
 
 /* ---------- Add Lead modal ---------- */
 const leadModal = $('#add-lead-modal');
