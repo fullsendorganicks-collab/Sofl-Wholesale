@@ -4,76 +4,87 @@ Living reference doc. Update this whenever something changes (new account,
 new key, new fix, new decision) — this is the single source of truth for
 "what is this system and how do I operate it," not the chat history.
 
-Last updated: 2026-07-29, early hours (full cost incident resolved, root
-cause confirmed, real fix built — NOT yet pushed/deployed/tested)
+Last updated: 2026-07-29, ~7:30 PM — cost fix deployed, count-preview bug
+found and fixed, real $8.67 test completed, dashboard "Find New Leads"
+panel built and live
 
-**Current status: core loop proven working. A real, serious cost incident
-happened tonight, fully explained now via BatchData support + a real
-itemized ledger pull, and a real fix is written but sitting local-only,
-untested against the live API. Read this whole section before touching
-BatchData again.**
+**Current status: BatchData pipeline is deployed, working, and its real
+per-lead cost is now known from an actual test — $8.67 for 5 inserted
+leads (~$1.73/lead). Read this whole section before running another real
+ingest.**
 
-### What actually happened (full, confirmed accounting)
+### Incident #1 (2026-07-28 night): search wrongly believed free
 
-Wallet went $50.00 → $28.10 (~$21.90 spent) across ~9 API calls on
-2026-07-28. **Root cause, confirmed via BatchData support: `/property/search`
-is NOT free.** Earlier code/docs in this project incorrectly stated
-"Property Search Sessions: $0.00" based on a misreading of BatchData's
-pricing page. In reality, search is billed **per record returned** (not
-per call) — confirmed via a real itemized consumption-report pull
-(`GET /api/v1/wallet/consumption-report`):
+Wallet went $50.00 → $28.10 (~$21.90 spent) across ~9 calls. Root cause,
+confirmed via BatchData support + a real consumption-report pull:
+`/property/search` is billed **per record returned**, not free as earlier
+project docs incorrectly claimed. Full itemized breakdown:
 
-| Time | Endpoint | Records requested | Cost |
+| Time | Endpoint | Records | Cost |
 |---|---|---|---|
 | 4:26 PM | wallet top-up | — | +$50.00 |
 | 4:27–4:31 PM | search ×4 | small batches | $1.92, $0.64, $0.64, $1.92 |
-| 5:11 PM | search | — | $1.92 |
-| 5:11 PM | skip-trace | 1 property | $0.07 |
-| 5:27 PM | search | — | $1.92 |
-| 5:27 PM | skip-trace | 1 property | $0.07 |
-| **11:24 PM** | **search, `limit: 20`** | **20 records** | **$12.80** |
+| 5:11 PM | search + skip-trace | 1 property | $1.92 + $0.07 |
+| 5:27 PM | search + skip-trace | 1 property | $1.92 + $0.07 |
+| 11:24 PM | search, `limit: 20` | 20 records | $12.80 |
 
-The $12.80 charge was a "dry_run" test explicitly described (incorrectly,
-by me) as free — dry_run only skips `skip_trace()` and the DB insert, it
-never skipped the actual paid search call. **skip-trace pricing ($0.07)
-was accurate the whole time** — only search pricing was wrong.
+**Fix deployed** (commit `dfa47e2`, 2026-07-29): `MAX_SEARCH_RECORDS_PER_CALL = 10`
+hard ceiling inside `search_distressed_properties()`; `count_matching_properties()`
++ `POST /leads/preview-count` (a `take: 0` request, confirmed by BatchData
+support to bill as ~1 record — the real near-zero-cost preview); corrected
+`quickLists` server-side filtering (see below); all docstrings fixed.
 
-### The real fix (written 2026-07-29, NOT yet pushed or tested)
+### Incident #2 (2026-07-29 evening): count field name wrong, then confirmed
 
-- `MAX_SEARCH_RECORDS_PER_CALL = 10` — hard ceiling enforced *inside*
-  `search_distressed_properties()`, cannot be bypassed by any caller
-- Corrected docstrings everywhere — no more "search is free" claims
-- **`count_matching_properties()`** (new function) + **`POST /leads/preview-count`**
-  (new endpoint) — confirmed via BatchData support: sending `take: 0`
-  returns a match count billed as only ONE record at the dataset rate.
-  This is the real near-zero-cost way to check "how many properties
-  match this filter" before running a real search. **Use this before
-  every new county/quicklists combination**, not the old `dry_run` (which
-  still costs money — misleadingly named, kept for backward compat but
-  don't treat it as free)
-- **Server-side filtering fixed**: BatchData support confirmed the correct
-  mechanism is a `quickLists` array of string tags (`"absentee-owner"`,
-  `"tax-default"`, `"preforeclosure"`, `"notice-of-default"`,
-  `"high-equity"`) combined with AND logic — NOT the flat top-level
-  booleans (`{"absenteeOwner": true}`) the code used before, which
-  support confirmed is not a supported filter and silently did nothing.
-  `QUICKLIST_TAG_MAP` in `batchdata_service.py` translates our internal
-  signal names to BatchData's real tags. Confirmed: price per record does
-  NOT vary by which quickLists filter is used — it's a flat dataset rate,
-  filtering only reduces how many (irrelevant) records you pay for.
+`count_matching_properties()` shipped with 3 guessed field names for the
+match count (`meta.total`, `totalCount`, `total`) — none were real.
+**The safeguard worked as designed**: instead of silently returning a
+wrong `0`, it logged the raw response and returned `count: None`, visibly
+telling the user it couldn't parse the count rather than lying. Real
+response captured from Render logs, fix deployed (commit `8b7e93b`):
 
-### What's NOT done yet
+```
+Real field: results.meta.results.resultsFound
+Confirmed against 2 real responses:
+  - {resultCount: 0, resultsFound: 0}       -> unfiltered query, 0 real matches
+  - {resultCount: 0, resultsFound: 731805}  -> Palm Beach County, no filter, total properties
+```
 
-This fix has been written and syntax-checked, and the server boots
-cleanly locally — but **has not been pushed to GitHub, not deployed to
-Render, and not tested against a real BatchData call.** Next session:
-review the diff, push, deploy, then test `count_matching_properties()`
-first (near-zero cost) before any real search/ingest call.
+### First real ingest test after both fixes (2026-07-29, ~7 PM)
 
-**Rule going forward, permanently**: call `POST /leads/preview-count`
-first on any new county/quicklists combination. Never call `/leads/ingest`
-"to see what happens" — state the exact worst-case cost first and get
-explicit approval before every real BatchData call, no exceptions.
+`county: "palm beach"` via the new dashboard "Find New Leads" panel →
+**Inserted: 5, rejected: 1, skip-traces used: 5.**
+
+**Real cost, confirmed by checking the actual BatchData wallet balance
+before/after** (the response itself only reports skip-trace cost, not
+search cost — this is a known gap, see §9): **$28.10 → $19.43 = $8.67
+spent for 5 inserted leads (~$1.73/lead).** Confirmed skip-trace portion:
+5 × $0.07 = $0.35. The remaining ~$8.32 was the search call itself
+(returned up to 10 records at BatchData's per-record rate).
+
+**Business math discussed**: `DEFAULT_ASSIGNMENT_FEE_TARGET = 12000` (a
+typical wholesale assignment fee). Even at a pessimistic 1-in-20 lead-to-close
+rate, $1.73/lead × 20 = $34.60 spent to generate one ~$12,000 deal — the
+economics plausibly work. **The real optimization opportunity is reducing
+search cost per lead** (tighter quicklists/county targeting so fewer
+irrelevant records get returned and billed), not avoiding BatchData
+entirely.
+
+### Dashboard: "Find New Leads" panel (built + deployed, commit `6ba0402`)
+
+Two-step UI in the Leads section: (1) "Check How Many Leads Match" —
+calls `/leads/preview-count` only, shows real count + a cost warning; (2)
+a separate "Pull Up To N Leads Now" button appears only after step 1,
+requires a browser `confirm()` dialog before calling the real, paid
+`/leads/ingest`. No single click can trigger real spending.
+
+**Current BatchData wallet balance: $19.43** (as of 2026-07-29, ~7:30 PM).
+
+**Rule going forward, permanently**: check the actual wallet balance
+before and after any new real ingest call to confirm the true cost — the
+`/leads/ingest` response's `estimated_cost_usd` field only covers
+skip-trace, NOT search, so it understates real cost. State expected
+worst-case cost before every real BatchData call.
 
 ---
 
@@ -109,7 +120,7 @@ outbound action (offer emails, contracts) requires your explicit approval
 | Render | ✅ Live | Two services under "Soflo Wholesale" project: Web Service + Cron Job, both need the same env vars |
 | GitHub | ✅ Live | Private repo, `.env` and `client_secret.json` correctly gitignored |
 | Twilio (SMS) | ❌ Not set up | Deliberately skipped — costs money, email brief covers everything. `sms_service.py` is fully optional, app runs fine without it |
-| BatchData | ✅ Live, funded | $50 paid 2026-07-28, balance $28.10 as of end of session (full incident explained — see status note at top). **Property search is NOT free** — billed per record returned, price does not vary by quickLists filter used. Skip trace confirmed accurate at $0.07/property. Real near-zero-cost preview: `POST /leads/preview-count` (take:0, billed as ~1 record). `/leads/ingest` hard-caps search to 10 records/call and skip-trace via `max_skip_traces` (default 5, ~$0.35 max) — fix written 2026-07-29, not yet deployed. |
+| BatchData | ✅ Live, funded, working | $50 paid 2026-07-28. **Balance: $19.43** as of 2026-07-29 ~7:30 PM, after a real, successful 5-lead ingest (~$1.73/lead, see status note). Property search billed per record returned (NOT free); skip trace confirmed accurate at $0.07/property. Preview: `POST /leads/preview-count` (take:0, ~1 record cost, real count field confirmed: `results.meta.results.resultsFound`). `/leads/ingest` hard-caps search to 10 records/call, skip-trace via `max_skip_traces` (default 5, ~$0.35 max skip-trace cost — search cost is separate and NOT included in the response). Dashboard "Find New Leads" panel live and working. |
 
 ## 4. What's proven working (real end-to-end tests done)
 
@@ -122,15 +133,20 @@ outbound action (offer emails, contracts) requires your explicit approval
 - Both Render services (Web Service + Cron Job) deployed and functioning
 - **Manual lead entry** (`POST /leads/manual`, "+ Add lead manually" button on dashboard) — tested end-to-end, inserts with `source='manual'`, flows through the same scoring/offer pipeline as any other lead
 - **Manual buyer entry** (`POST /buyers/manual`, "+ Add buyer manually" button on dashboard) — tested end-to-end, feeds `buyer_matching.py` the same as a BatchData-prospected buyer
-- **BatchData lead ingestion, full pipeline** (`POST /leads/ingest`) — tested end-to-end with real funded credits, 2026-07-28. Real property (2632 NE 29th Ct, Fort Lauderdale) searched → qualifying filter correctly rejected 2/3 properties (no distress signal or insufficient equity) → 1 passed → skip-traced → inserted with correct owner name + mailing address → scored by Claude (32/100, correctly identified as weak — see below). First fully-automated real lead in the system.
-- **Two-tier qualifying filter** (tightened 2026-07-28 after reviewing that 32/100 lead) — `tax_delinquent`, `pre_foreclosure`, and `lis_pendens_filed` qualify at 30% equity (unchanged); `absentee_owner` ALONE now requires 50% equity (`WEAK_SIGNAL_MIN_EQUITY_PERCENT` in `batchdata_service.py`), since an absentee landlord isn't necessarily a motivated seller. Real dry-run test on 20 properties: 11 would qualify, 6 rejected (no signal / strong-signal-but-low-equity), 3 rejected specifically for weak-signal-insufficient-equity (`rejected_weak_signal_insufficient_equity` in the response) — confirms the new tier is actually distinguishing weak vs. strong signals, not just theory
-- **Spending cap + dry-run mode** — `max_skip_traces` caps skip-trace spend per `/leads/ingest` call (default 5 ≈ $0.35 max in skip-trace fees). `dry_run: true` skips skip-trace + the DB insert, but ⚠️ **still runs the real, paid search call** — it is NOT zero cost (see status note at top for the real $12.80 incident this caused). Response includes `skip_traces_used` and `estimated_cost_usd`, but that estimate covers skip-trace only, not search — use `POST /leads/preview-count` for a genuinely near-zero-cost check
+- **BatchData lead ingestion, full pipeline, TWO real successful runs**:
+  - 2026-07-28: 1 lead (2632 NE 29th Ct, Fort Lauderdale) — owner name + mailing address correct, scored 32/100 by Claude (correctly identified as weak: single soft signal, high value, no real urgency)
+  - 2026-07-29: 5 leads inserted from Palm Beach County via the new dashboard panel, real cost $8.67 confirmed via wallet balance check (see status note at top)
+- **Two-tier qualifying filter** — `tax_delinquent`, `pre_foreclosure`, `lis_pendens_filed` qualify at 30% equity; `absentee_owner` ALONE requires 50% equity (`WEAK_SIGNAL_MIN_EQUITY_PERCENT`), since an absentee landlord isn't necessarily motivated to sell below market. Confirmed distinguishing weak vs. strong signals correctly in a real dry-run test (11 qualify / 6 rejected / 3 rejected-weak-signal out of 20)
+- **Server-side quickLists filtering** — confirmed correct mechanism via BatchData support (array of tags like `"tax-default"`, `"absentee-owner"`, AND logic), replacing the original flat-boolean approach that silently filtered nothing
+- **Near-zero-cost count preview** — `POST /leads/preview-count`, confirmed real field name (`resultsFound`), verified against 2 real responses (0 and 731,805)
+- **Spending cap** — `MAX_SEARCH_RECORDS_PER_CALL = 10` (search), `max_skip_traces` default 5 (~$0.35 max skip-trace fees) — both enforced server-side, cannot be bypassed by a caller
+- **Dashboard "Find New Leads" panel** — two-step UI (check count → explicit confirm before spending), live and used for the successful 2026-07-29 5-lead test
 
-## 5. Manual data entry (until BatchData is funded)
+## 5. Manual data entry (still useful even with BatchData working)
 
-BatchData needs a $50 minimum wallet balance (see §3) that isn't funded
-yet, so **manual entry is the primary way real data enters this system
-right now** — not a fallback. Both are on the dashboard:
+BatchData is funded and working (see §3), but manual entry stays useful
+for any property/buyer you already know personally — no cost, instant,
+same downstream pipeline. Both are on the dashboard:
 
 - **"+ Add lead manually"** under the Leads section — property address,
   owner contact, estimated value/equity, distress signals. Runs through
@@ -186,16 +202,17 @@ wholesaling clearance.
 
 - **Render free tier spins down when idle** — first request after inactivity can take 30-50s to respond. Not a bug, just the free-tier tradeoff.
 - **Dashboard password**: copy-pasting it sometimes fails (invisible characters from clipboard) — type manually if login fails unexpectedly.
-- **Render deploys can silently serve stale files** — happened once with the dashboard HTML (Render said "Deploy live" but served an old version). If a deploy looks live but the change isn't showing, use Manual Deploy → "Clear build cache & deploy" rather than a normal redeploy.
+- **Render deploys can silently serve stale files** — happened multiple times tonight (both API code and dashboard HTML). Render says "Deploy live" but browser/server can still show old content. Fix: Manual Deploy → "Clear build cache & deploy" on Render's side, AND a hard refresh (Ctrl+Shift+R) in the browser — both caches have caused this independently.
 - **BATCHDATA_API_KEY must be set on the Web Service specifically** — it was missing there once even though it was in `.env` locally, causing a `RuntimeError` on every ingest call. Check Render's Environment tab on the Web Service (not just the Cron Job) if ingestion ever fails with a "not set" error.
-- **Owner phone/email from skip-trace are not yet reliable** — see §6. Mailing address and owner name work; phone/email are best-effort until the real response shape is confirmed.
-- **Real cost incident, 2026-07-28, FULLY EXPLAINED**: $21.90 spent, root cause was incorrectly believing `/property/search` was free when it's actually billed per record returned (confirmed via BatchData support + real consumption-report pull — see status note at top for the exact itemized breakdown). Fix (10-record hard cap + `count_matching_properties()` near-zero-cost preview) is written but NOT yet deployed as of end of session. Do not deploy without re-reading the status note at the top of this file first.
+- **Owner phone/email from skip-trace are not yet reliable** — see §6. Mailing address and owner name work; phone/email are best-effort until the real response shape is confirmed (this is now the single biggest remaining unconfirmed piece).
+- **`/leads/ingest`'s `estimated_cost_usd` only covers skip-trace, NOT search** — this significantly understates real cost (confirmed: reported $0.35, actual spend $8.67 on the 2026-07-29 test). Always check the actual BatchData wallet balance for true cost, don't trust this field alone.
+- **Search cost per lead is high and not yet optimized** — $8.67 for 5 leads (~$1.73/lead) on an unfiltered county-wide query. The real lever to reduce this is tighter `quicklists`/geographic targeting so fewer irrelevant (and billed) records get returned per search call — not yet tuned.
+- **Two real cost incidents tonight, both fully explained and fixed**: (1) 2026-07-28, $21.90 spent believing search was free; (2) 2026-07-29, count-preview feature had a wrong field-name guess (safeguard caught it correctly, no money lost from this one specifically). Both root causes are documented in the status note at the top — read it before making further BatchData changes.
 
 ## 10. Next steps, in priority order
 
-1. **Review, push, and deploy the cost fix** written 2026-07-29 (10-record search cap, `count_matching_properties()`, corrected `quickLists` filtering) — currently local-only
-2. **First real call after deploying**: `POST /leads/preview-count` on a real county/quicklists combination (near-zero cost) — confirm it returns a sane number before ever calling `/leads/ingest` again
-3. **In progress**: post-scoring quality gate in `lead_scoring.py` — leads scoring below 50 should get `status='low_priority'` instead of `'scored'`, hidden from the default dashboard view but not deleted (deferred to a later session, per plan agreed 2026-07-28 — this is "Step 2" of a two-step plan; Step 1, the ingestion-time weak-signal filter, is done)
+1. **Optimize search cost per lead** — test whether county+quicklists combinations can be narrowed further to reduce the ~$1.73/lead rate seen on the first real 5-lead pull
+2. **In progress**: post-scoring quality gate in `lead_scoring.py` — leads scoring below 50 should get `status='low_priority'` instead of `'scored'`, hidden from the default dashboard view but not deleted (deferred to a later session, per plan agreed 2026-07-28 — this is "Step 2" of a two-step plan; Step 1, the ingestion-time weak-signal filter, is done)
 4. Resolve skip-trace phone/email extraction — check Render logs for the `[batchdata_service] skip_trace: unrecognized results shape, keys=[...]` line on the next real call to see the actual structure
 5. Run one real `POST /buyers/prospect` call — verify field mapping the same way search/skip-trace needed, and check whether it has the same quickLists/pricing gaps search did before assuming otherwise
 6. Get the foreclosure-specific attorney confirmation, flip `attorney_cleared_foreclosure`
